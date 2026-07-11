@@ -764,7 +764,13 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         context.user_data["awaiting_income_amount"] = False
         context.user_data["income_amount"] = amount
-        await confirm_income_msg(update.message, context)
+        try:
+            await confirm_income_msg(update.message, context)
+        except Exception as e:
+            print(f"ERROR in confirm_income_msg: {e}", flush=True)
+            await update.message.reply_text(
+                "⚠️ Error al procesar. Intenta con /start"
+            )
 
 
 # ─── MAIN ───
