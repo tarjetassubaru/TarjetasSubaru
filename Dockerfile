@@ -6,7 +6,9 @@ COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY backend/ .
-RUN chmod +x start.sh
+
+ENV TELEGRAM_BOT_TOKEN=8512449965:AAHgQe-Ch48de--GBkHrABjj_OEuqbNwLfM
+ENV API_URL=https://tarjetassubaru-production.up.railway.app
 
 EXPOSE 8000
 
