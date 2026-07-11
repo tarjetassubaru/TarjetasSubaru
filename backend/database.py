@@ -6,18 +6,21 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-DATABASE_URL = os.getenv("DATABASE_URL")
+DATABASE_URL = os.getenv("DATABASE_URL", "")
 
 # Neon requires SSL
-if "neon.tech" in DATABASE_URL:
+if DATABASE_URL and "neon.tech" in DATABASE_URL:
     # asyncpg uses its own SSL arg, not sslmode from the URL
     DATABASE_URL = DATABASE_URL.replace("?sslmode=require", "")
     ssl_context = ssl_mod.create_default_context()
     ssl_context.check_hostname = False
     ssl_context.verify_mode = ssl_mod.CERT_NONE
     engine = create_async_engine(DATABASE_URL, echo=False, connect_args={"ssl": ssl_context})
-else:
+elif DATABASE_URL:
     engine = create_async_engine(DATABASE_URL, echo=False)
+else:
+    raise RuntimeError("DATABASE_URL environment variable is not set! Go to Railway > Variables and add it.")
+
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 

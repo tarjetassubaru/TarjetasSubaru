@@ -37,6 +37,11 @@ app.add_middleware(
 )
 
 
+@app.get("/")
+async def root():
+    return {"status": "ok", "service": "Credito Subaru API"}
+
+
 @app.get("/api/banks", response_model=list[BankResponse])
 async def list_banks(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Bank).order_by(Bank.position))
