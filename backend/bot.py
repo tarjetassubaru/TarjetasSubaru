@@ -1,4 +1,8 @@
 import os
+import sys
+from dotenv import load_dotenv
+load_dotenv()
+
 import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -12,6 +16,10 @@ from telegram.ext import (
 import httpx
 
 API_URL = os.getenv("API_URL", "http://localhost:8000")
+token = os.getenv("TELEGRAM_BOT_TOKEN")
+print(f"DEBUG: API_URL={API_URL}", flush=True)
+print(f"DEBUG: TOKEN={'SET (' + token[:10] + '...)' if token else 'NOT SET'}", flush=True)
+print(f"DEBUG: All env vars with TELEGRAM: {[k for k in os.environ if 'TELEGRAM' in k.upper()]}", flush=True)
 
 # Store user chat_id for notifications
 USER_CHAT_ID = None
