@@ -118,6 +118,20 @@ class CreditCardResponse(BaseModel):
     updated_at: datetime
 
 
+class TransferCreate(BaseModel):
+    source_account_id: uuid.UUID
+    destination_account_id: uuid.UUID
+    amount: float
+    description: str | None = None
+
+
+class TransferResponse(BaseModel):
+    source: AccountResponse
+    destination: AccountResponse
+    source_transaction: TransactionResponse
+    destination_transaction: TransactionResponse
+
+
 class TransactionCreate(BaseModel):
     bank_id: uuid.UUID
     account_id: uuid.UUID | None = None

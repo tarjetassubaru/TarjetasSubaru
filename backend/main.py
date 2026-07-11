@@ -1,4 +1,6 @@
+import asyncio
 import base64
+import logging
 import math
 import os
 import uuid
@@ -10,20 +12,71 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database import init_db, get_db
+from database import init_db, get_db, async_session
 from models import Bank, Account, CreditCard, Transaction
 from schemas import (
     BankCreate, BankUpdate, BankReorder, BankResponse, BankDataResponse,
     AccountCreate, AccountUpdate, AccountResponse,
     CreditCardCreate, CreditCardUpdate, CreditCardResponse,
     TransactionCreate, TransactionResponse,
+    TransferCreate, TransferResponse,
 )
+
+logger = logging.getLogger("credito_subaru")
+WEEKLY_INTEREST_INTERVAL = 7 * 24 * 60 * 60
+
+
+async def apply_weekly_interest():
+    while True:
+        await asyncio.sleep(WEEKLY_INTEREST_INTERVAL)
+        try:
+            async with async_session() as session:
+                result = await session.execute(
+                    select(Account).where(Account.interest_rate > 0)
+                )
+                accounts = result.scalars().all()
+                now = datetime.now(timezone.utc)
+                for account in accounts:
+                    last = account.last_interest_date
+                    if last is None:
+                        account.last_interest_date = now
+                        continue
+                    if last.tzinfo is None:
+                        last = last.replace(tzinfo=timezone.utc)
+                    days = (now - last).days
+                    if days <= 0:
+                        continue
+                    annual_rate = float(account.interest_rate) / 100
+                    daily_rate = math.pow(1 + annual_rate, 1 / 365) - 1
+                    balance = float(account.balance)
+                    new_balance = balance * math.pow(1 + daily_rate, days)
+                    earned = round(new_balance - balance, 2)
+                    if earned <= 0:
+                        continue
+                    account.balance = round(new_balance, 2)
+                    account.last_interest_date = now
+                    txn = Transaction(
+                        bank_id=account.bank_id,
+                        account_id=account.id,
+                        type="ingreso",
+                        amount=earned,
+                        merchant="Intereses automaticos",
+                        category="Intereses",
+                        description=f"Interes semanal {account.interest_rate}% anual - {days} dias",
+                    )
+                    session.add(txn)
+                await session.commit()
+                logger.info(f"Applied weekly interest to {len(accounts)} accounts")
+        except Exception as e:
+            logger.error(f"Error applying weekly interest: {e}")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+    task = asyncio.create_task(apply_weekly_interest())
     yield
+    task.cancel()
 
 
 app = FastAPI(title="Credito Subaru API", lifespan=lifespan)
@@ -265,6 +318,68 @@ async def delete_credit_card(card_id: uuid.UUID, db: AsyncSession = Depends(get_
         raise HTTPException(status_code=404, detail="Credit card not found")
     await db.delete(card)
     await db.commit()
+
+
+@app.get("/api/accounts/all", response_model=list[AccountResponse])
+async def list_all_accounts(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Account).order_by(Account.created_at))
+    return result.scalars().all()
+
+
+@app.post("/api/transfer", response_model=TransferResponse, status_code=status.HTTP_201_CREATED)
+async def transfer_between_accounts(data: TransferCreate, db: AsyncSession = Depends(get_db)):
+    if data.source_account_id == data.destination_account_id:
+        raise HTTPException(status_code=400, detail="Source and destination must be different")
+    if data.amount <= 0:
+        raise HTTPException(status_code=400, detail="Amount must be greater than 0")
+
+    result = await db.execute(select(Account).where(Account.id == data.source_account_id))
+    source = result.scalar_one_or_none()
+    if not source:
+        raise HTTPException(status_code=404, detail="Source account not found")
+
+    result = await db.execute(select(Account).where(Account.id == data.destination_account_id))
+    destination = result.scalar_one_or_none()
+    if not destination:
+        raise HTTPException(status_code=404, detail="Destination account not found")
+
+    if float(source.balance) < data.amount:
+        raise HTTPException(status_code=400, detail="Insufficient balance in source account")
+
+    source.balance = float(source.balance) - data.amount
+    destination.balance = float(destination.balance) + data.amount
+
+    desc = data.description or f"Transferencia a {destination.name}"
+    source_txn = Transaction(
+        bank_id=source.bank_id,
+        account_id=source.id,
+        type="gasto",
+        amount=data.amount,
+        merchant=f"Transferencia a {destination.name}",
+        category="Transferencia",
+        description=desc,
+    )
+    dest_txn = Transaction(
+        bank_id=destination.bank_id,
+        account_id=destination.id,
+        type="ingreso",
+        amount=data.amount,
+        merchant=f"Transferencia desde {source.name}",
+        category="Transferencia",
+        description=desc,
+    )
+    db.add_all([source_txn, dest_txn])
+    await db.commit()
+    await db.refresh(source)
+    await db.refresh(destination)
+    await db.refresh(source_txn)
+    await db.refresh(dest_txn)
+    return TransferResponse(
+        source=source,
+        destination=destination,
+        source_transaction=source_txn,
+        destination_transaction=dest_txn,
+    )
 
 
 @app.get("/api/transactions", response_model=list[TransactionResponse])

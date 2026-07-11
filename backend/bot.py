@@ -16,356 +16,769 @@ from telegram.ext import (
 import httpx
 
 API_URL = os.getenv("API_URL", "http://localhost:8000")
-token = os.getenv("TELEGRAM_BOT_TOKEN")
-print(f"DEBUG: API_URL={API_URL}", flush=True)
-print(f"DEBUG: TOKEN={'SET (' + token[:10] + '...)' if token else 'NOT SET'}", flush=True)
-print(f"DEBUG: All env vars with TELEGRAM: {[k for k in os.environ if 'TELEGRAM' in k.upper()]}", flush=True)
-
-# Store user chat_id for notifications
-USER_CHAT_ID = None
 
 
-async def get_json(path: str):
-    async with httpx.AsyncClient() as client:
+async def api_get(path: str):
+    async with httpx.AsyncClient(timeout=30) as client:
         r = await client.get(f"{API_URL}{path}")
         r.raise_for_status()
         return r.json()
 
 
-async def post_json(path: str, data: dict):
-    async with httpx.AsyncClient() as client:
+async def api_post(path: str, data: dict):
+    async with httpx.AsyncClient(timeout=30) as client:
         r = await client.post(f"{API_URL}{path}", json=data)
         r.raise_for_status()
         return r.json()
 
 
-async def put_json(path: str, data: dict):
-    async with httpx.AsyncClient() as client:
-        r = await client.put(f"{API_URL}{path}", json=data)
-        r.raise_for_status()
-        return r.json()
+def fmt_money(amount: float) -> str:
+    return f"${amount:,.0f}".replace(",", ".")
 
 
-# /start
+def credit_pct(used: float, limit: float) -> float:
+    return (used / limit * 100) if limit > 0 else 0
+
+
+def credit_emoji(pct: float) -> str:
+    if pct >= 30:
+        return "🔴"
+    elif pct >= 20:
+        return "🟡"
+    return "🟢"
+
+
+def credit_status(pct: float) -> str:
+    if pct >= 30:
+        return "ALERTA: Superaste el 30%"
+    elif pct >= 20:
+        return "En rango ideal (20-30%)"
+    return "Vas bien, bajo el 20%"
+
+
+# ─── /start ───
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global USER_CHAT_ID
-    USER_CHAT_ID = update.effective_chat.id
+    keyboard = [
+        [InlineKeyboardButton("🏦 Ver Bancos", callback_data="menu_banks")],
+        [InlineKeyboardButton("📊 Mi Resumen", callback_data="menu_summary")],
+        [InlineKeyboardButton("💸 Transferir", callback_data="menu_transfer")],
+        [InlineKeyboardButton("❓ Ayuda", callback_data="menu_help")],
+    ]
     await update.message.reply_text(
-        "💳 *CreditoSubaru Bot*\n\n"
-        "Comandos:\n"
-        "/bancos - Ver tus bancos\n"
-        "/gasto - Registrar gasto en tarjeta\n"
-        "/resumen - Resumen de uso de credito\n"
-        "/ayuda - Ver ayuda",
-        parse_mode="Markdown",
-    )
-
-
-# /bancos
-async def bancos(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    banks = await get_json("/api/banks")
-    if not banks:
-        await update.message.reply_text("No hay bancos registrados.")
-        return
-
-    text = "*Tus Bancos:*\n\n"
-    for b in banks:
-        data = await get_json(f"/api/banks/{b['id']}/data")
-        accounts = data.get("accounts", [])
-        cards = data.get("credit_cards", [])
-
-        text += f"*{b['name']}*\n"
-        for a in accounts:
-            bal = f"${a['balance']:,.0f}"
-            text += f"  💰 {a['name']}: {bal}\n"
-        for c in cards:
-            used = c["used_credit"]
-            limit = c["credit_limit"]
-            pct = (used / limit * 100) if limit > 0 else 0
-            available = limit - used
-            text += f"  💳 {c['name']}\n"
-            text += f"     Usado: ${used:,.0f} / ${limit:,.0f} ({pct:.1f}%)\n"
-            text += f"     Disponible: ${available:,.0f}\n"
-        text += "\n"
-
-    await update.message.reply_text(text, parse_mode="Markdown")
-
-
-# /gasto
-async def gasto(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    banks = await get_json("/api/banks")
-    if not banks:
-        await update.message.reply_text("No hay bancos registrados.")
-        return
-
-    # Build cards list
-    all_cards = []
-    for b in banks:
-        data = await get_json(f"/api/banks/{b['id']}/data")
-        for c in data.get("credit_cards", []):
-            all_cards.append({
-                "bank_name": b["name"],
-                "bank_id": b["id"],
-                "card_id": c["id"],
-                "card_name": c["name"],
-                "credit_limit": c["credit_limit"],
-                "used_credit": c["used_credit"],
-            })
-
-    if not all_cards:
-        await update.message.reply_text("No hay tarjetas de credito registradas.")
-        return
-
-    context.user_data["cards"] = all_cards
-
-    keyboard = []
-    for i, c in enumerate(all_cards):
-        keyboard.append([
-            InlineKeyboardButton(
-                f"{c['bank_name']} - {c['card_name']}",
-                callback_data=f"card_{i}",
-            )
-        ])
-
-    await update.message.reply_text(
-        "*Selecciona la tarjeta:*",
+        "*CreditoSubaru*\nQue quieres hacer?",
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode="Markdown",
     )
 
 
-async def card_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ─── MAIN MENU CALLBACKS ───
+async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    data = query.data
 
-    idx = int(query.data.split("_")[1])
-    card = context.user_data["cards"][idx]
-    context.user_data["selected_card"] = card
-
-    used = card["used_credit"]
-    limit = card["credit_limit"]
-    pct = (used / limit * 100) if limit > 0 else 0
-    available = limit - used
-
-    text = (
-        f"*{card['bank_name']} - {card['card_name']}*\n\n"
-        f"Credito total: ${limit:,.0f}\n"
-        f"Usado: ${used:,.0f} ({pct:.1f}%)\n"
-        f"Disponible: ${available:,.0f}\n\n"
-        f"Meta: usar max 30% (${limit * 0.3:,.0f})\n"
-    )
-
-    if pct >= 30:
-        text += "⚠️ *ALERTA: Ya superaste el 30%!*\n"
-    elif pct >= 20:
-        text += "🟡 *Estas en el rango ideal (20-30%)*\n"
-    else:
-        text += "✅ *Vas bien, bajo el 20%*\n"
-
-    await query.edit_message_text(text, parse_mode="Markdown")
-
-    await query.message.reply_text(
-        "Escribe el monto del gasto (solo numeros):",
-    )
-    context.user_data["awaiting_amount"] = True
+    if data == "menu_banks":
+        await show_banks_list(query, context)
+    elif data == "menu_summary":
+        await show_summary(query, context)
+    elif data == "menu_transfer":
+        await start_transfer(query, context, all_accounts=True)
+    elif data == "menu_help":
+        await show_help(query)
+    elif data == "menu_main":
+        await show_main_menu(query)
+    elif data.startswith("bank_"):
+        await show_bank_detail(query, context, data)
+    elif data.startswith("action_"):
+        await handle_bank_action(query, context, data)
 
 
-async def amount_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.user_data.get("awaiting_amount"):
-        return
-
-    try:
-        amount = float(update.message.text.replace(".", "").replace(",", ""))
-    except ValueError:
-        await update.message.reply_text("Monto invalido. Escribe solo numeros.")
-        return
-
-    context.user_data["awaiting_amount"] = False
-    card = context.user_data["selected_card"]
-
-    # Register the expense
-    await post_json("/api/transactions", {
-        "bank_id": card["bank_id"],
-        "credit_card_id": card["card_id"],
-        "type": "gasto",
-        "amount": amount,
-        "merchant": "Gasto manual",
-        "category": "Manual",
-        "description": f"Gasto registrado via Telegram",
-    })
-
-    # Get updated card data
-    updated_cards = await get_json(f"/api/banks/{card['bank_id']}/data")
-    for c in updated_cards.get("credit_cards", []):
-        if c["id"] == card["card_id"]:
-            new_used = c["used_credit"]
-            limit = c["credit_limit"]
-            break
-
-    new_pct = (new_used / limit * 100) if limit > 0 else 0
-    available = limit - new_used
-    target_30 = limit * 0.3
-
-    text = (
-        f"*Gasto registrado: ${amount:,.0f}*\n\n"
-        f"*{card['bank_name']} - {card['card_name']}*\n"
-        f"Usado: ${new_used:,.0f} / ${limit:,.0f} ({new_pct:.1f}%)\n"
-        f"Disponible: ${available:,.0f}\n\n"
-    )
-
-    if new_pct >= 30:
-        text += "🔴 *ALERTA: Superaste el 30%!*\n"
-        text += "No uses mas esta tarjeta hasta pagar.\n"
-    elif new_pct >= 20:
-        text += f"🟡 *En rango ideal (20-30%)*\n"
-        remaining = target_30 - new_used
-        if remaining > 0:
-            text += f"Puedes usar ${remaining:,.0f} mas antes del limite.\n"
-    else:
-        text += f"✅ *Vas bien* - Puedes usar ${target_30 - new_used:,.0f} mas.\n"
-
-    # Suggest Mercado Pago transfer
-    text += (
-        f"\n💡 *Sugerencia:*\n"
-        f"¿Depositar ${amount:,.0f} en Mercado Pago para\n"
-        f"resguardarlo y ganar intereses hasta pagar la tarjeta?\n"
-        f"Tasa actual: 5% anual.\n"
-    )
-
+async def show_main_menu(query):
     keyboard = [
-        [
-            InlineKeyboardButton("✅ Si, transferir a MP", callback_data=f"transfer_{card['card_id']}_{amount}"),
-            InlineKeyboardButton("❌ No, dejar asi", callback_data="cancel_transfer"),
-        ]
+        [InlineKeyboardButton("🏦 Ver Bancos", callback_data="menu_banks")],
+        [InlineKeyboardButton("📊 Mi Resumen", callback_data="menu_summary")],
+        [InlineKeyboardButton("💸 Transferir", callback_data="menu_transfer")],
+        [InlineKeyboardButton("❓ Ayuda", callback_data="menu_help")],
+    ]
+    await query.edit_message_text(
+        "*CreditoSubaru*\nQue quieres hacer?",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="Markdown",
+    )
+
+
+# ─── BANKS LIST ───
+async def show_banks_list(query, context):
+    banks = await api_get("/api/banks")
+    if not banks:
+        await query.edit_message_text("No hay bancos registrados.")
+        return
+
+    context.user_data["banks"] = {b["id"]: b for b in banks}
+    keyboard = []
+    for b in banks:
+        keyboard.append([InlineKeyboardButton(b["name"], callback_data=f"bank_{b['id']}")])
+    keyboard.append([InlineKeyboardButton("◀️ Volver", callback_data="menu_main")])
+
+    await query.edit_message_text(
+        "*Selecciona un banco:*",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="Markdown",
+    )
+
+
+# ─── BANK DETAIL ───
+async def show_bank_detail(query, context, data):
+    bank_id = data.replace("bank_", "")
+    bank = context.user_data.get("banks", {}).get(bank_id)
+    if not bank:
+        banks = await api_get("/api/banks")
+        context.user_data["banks"] = {b["id"]: b for b in banks}
+        bank = context.user_data["banks"].get(bank_id)
+
+    bd = await api_get(f"/api/banks/{bank_id}/data")
+    accounts = bd.get("accounts", [])
+    cards = bd.get("credit_cards", [])
+
+    text = f"*{bank['name']}*\n\n"
+    if accounts:
+        text += "Cuentas:\n"
+        for a in accounts:
+            text += f"  💰 {a['name']}: {fmt_money(a['balance'])}\n"
+    if cards:
+        text += "\nTarjetas:\n"
+        for c in cards:
+            pct = credit_pct(c["used_credit"], c["credit_limit"])
+            text += f"  💳 {c['name']}: {fmt_money(c['used_credit'])} / {fmt_money(c['credit_limit'])} ({pct:.0f}%)\n"
+
+    context.user_data["current_bank_id"] = bank_id
+    keyboard = [
+        [InlineKeyboardButton("📜 Historial", callback_data=f"action_history_{bank_id}")],
+        [InlineKeyboardButton("💸 Transferir", callback_data=f"action_transfer_{bank_id}")],
+        [InlineKeyboardButton("💳 Pagar Tarjeta", callback_data=f"action_pay_{bank_id}")],
+        [InlineKeyboardButton("📥 Registrar Ingreso", callback_data=f"action_income_{bank_id}")],
+        [InlineKeyboardButton("◀️ Volver", callback_data="menu_banks")],
     ]
 
-    await update.message.reply_text(
+    await query.edit_message_text(
         text,
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode="Markdown",
     )
 
 
-async def transfer_yes(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
+# ─── BANK ACTIONS ───
+async def handle_bank_action(query, context, data):
+    parts = data.split("_", 2)
+    action = parts[1]
+    bank_id = parts[2] if len(parts) > 2 else context.user_data.get("current_bank_id")
 
-    parts = query.data.split("_")
-    card_id = parts[1]
-    amount = float(parts[2])
+    if action == "history":
+        await show_history(query, context, bank_id)
+    elif action == "transfer":
+        await start_transfer_from_bank(query, context, bank_id)
+    elif action == "pay":
+        await start_pay_card(query, context, bank_id)
+    elif action == "income":
+        await start_income(query, context, bank_id)
 
-    # Find Mercado Pago account
-    banks = await get_json("/api/banks")
-    mp_account = None
-    mp_bank_id = None
-    for b in banks:
-        if b["name"] == "Mercado Pago":
-            data = await get_json(f"/api/banks/{b['id']}/data")
-            for a in data.get("accounts", []):
-                mp_account = a
-                mp_bank_id = b["id"]
-                break
 
-    if not mp_account:
-        await query.edit_message_text("❌ No se encontro cuenta de Mercado Pago.")
+# ─── HISTORY ───
+async def show_history(query, context, bank_id):
+    txns = await api_get(f"/api/transactions?bank_id={bank_id}&limit=10")
+    bank = context.user_data.get("banks", {}).get(bank_id, {"name": "Banco"})
+
+    if not txns:
+        await query.edit_message_text(
+            f"*{bank['name']}*\nNo hay movimientos recientes.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("◀️ Volver", callback_data=f"bank_{bank_id}")]
+            ]),
+            parse_mode="Markdown",
+        )
         return
 
-    # Create transfer transaction (gasto from MP)
-    await post_json("/api/transactions", {
-        "bank_id": mp_bank_id,
-        "account_id": mp_account["id"],
-        "type": "gasto",
-        "amount": amount,
-        "merchant": "Transferencia a MP",
-        "category": "Resguardo",
-        "description": f"Resguardo de gasto en tarjeta - ${amount:,.0f}",
-    })
-
-    new_balance = mp_account["balance"] - amount
+    text = f"*{bank['name']} - Ultimos movimientos*\n\n"
+    for t in txns:
+        icon = "📤" if t["type"] == "gasto" else "📥"
+        date = t["created_at"][:10]
+        merchant = t.get("merchant") or t.get("category") or "Movimiento"
+        text += f"{icon} {fmt_money(t['amount'])} - {merchant} - {date}\n"
 
     await query.edit_message_text(
-        f"*Transferencia registrada*\n\n"
-        f"Se descontaron ${amount:,.0f} de Ahorro MP.\n"
-        f"Saldo actual: ${new_balance:,.0f}\n\n"
-        f"💡 El dinero estara generando intereses (5% anual)\n"
-        f"hasta que pagues la tarjeta.",
+        text,
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("◀️ Volver", callback_data=f"bank_{bank_id}")]
+        ]),
         parse_mode="Markdown",
     )
 
 
-async def transfer_no(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ─── TRANSFER ───
+async def start_transfer(query, context, all_accounts=False):
+    accounts = await api_get("/api/accounts/all")
+    if not accounts:
+        await query.edit_message_text("No hay cuentas disponibles.")
+        return
+
+    context.user_data["all_accounts"] = {a["id"]: a for a in accounts}
+    keyboard = []
+    for a in accounts:
+        banks = context.user_data.get("banks", {})
+        bank_name = ""
+        for b in context.user_data.get("banks", {}).values():
+            if b["id"] == a["bank_id"]:
+                bank_name = b["name"]
+                break
+        if not bank_name:
+            bank_name = "Banco"
+        keyboard.append([
+            InlineKeyboardButton(
+                f"{bank_name} - {a['name']}: {fmt_money(a['balance'])}",
+                callback_data=f"tsrc_{a['id']}",
+            )
+        ])
+    keyboard.append([InlineKeyboardButton("◀️ Cancelar", callback_data="menu_main")])
+
+    await query.edit_message_text(
+        "*Transferir*\nElige la cuenta de origen:",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="Markdown",
+    )
+
+
+async def start_transfer_from_bank(query, context, bank_id):
+    await start_transfer(query, context)
+
+
+async def transfer_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text("Ok, no se realiza transferencia.")
+    data = query.data
+
+    if data.startswith("tsrc_"):
+        src_id = data.replace("tsrc_", "")
+        context.user_data["transfer_src"] = src_id
+        accounts = context.user_data.get("all_accounts", {})
+        keyboard = []
+        for aid, a in accounts.items():
+            if aid == src_id:
+                continue
+            banks = context.user_data.get("banks", {})
+            bank_name = "Banco"
+            for b in banks.values():
+                if b["id"] == a["bank_id"]:
+                    bank_name = b["name"]
+                    break
+            keyboard.append([
+                InlineKeyboardButton(
+                    f"{bank_name} - {a['name']}: {fmt_money(a['balance'])}",
+                    callback_data=f"tdst_{aid}",
+                )
+            ])
+        keyboard.append([InlineKeyboardButton("◀️ Cancelar", callback_data="menu_main")])
+
+        await query.edit_message_text(
+            "*Transferir*\nElige la cuenta de destino:",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown",
+        )
+
+    elif data.startswith("tdst_"):
+        dst_id = data.replace("tdst_", "")
+        context.user_data["transfer_dst"] = dst_id
+        await query.edit_message_text(
+            "*Transferir*\nEscribe el monto (solo numeros):",
+            parse_mode="Markdown",
+        )
+        context.user_data["awaiting_transfer_amount"] = True
+
+    elif data == "confirm_transfer":
+        await execute_transfer(query, context)
+
+    elif data == "cancel_transfer":
+        await show_main_menu(query)
 
 
-# /resumen
-async def resumen(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    banks = await get_json("/api/banks")
+async def execute_transfer(query, context):
+    src_id = context.user_data.get("transfer_src")
+    dst_id = context.user_data.get("transfer_dst")
+    amount = context.user_data.get("transfer_amount")
+
+    result = await api_post("/api/transfer", {
+        "source_account_id": src_id,
+        "destination_account_id": dst_id,
+        "amount": amount,
+        "description": "Transferencia via Telegram bot",
+    })
+
+    src = result["source"]
+    dst = result["destination"]
+
+    await query.edit_message_text(
+        f"*Transferencia realizada*\n\n"
+        f"📤 {src['name']}: {fmt_money(src['balance'])}\n"
+        f"📥 {dst['name']}: {fmt_money(dst['balance'])}\n\n"
+        f"Monto: {fmt_money(amount)}",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("◀️ Menu principal", callback_data="menu_main")]
+        ]),
+        parse_mode="Markdown",
+    )
+
+    context.user_data.pop("transfer_src", None)
+    context.user_data.pop("transfer_dst", None)
+    context.user_data.pop("transfer_amount", None)
+    context.user_data.pop("awaiting_transfer_amount", None)
+
+
+# ─── PAY CREDIT CARD ───
+async def start_pay_card(query, context, bank_id):
+    bd = await api_get(f"/api/banks/{bank_id}/data")
+    cards = [c for c in bd.get("credit_cards", []) if c["used_credit"] > 0]
+
+    if not cards:
+        await query.edit_message_text(
+            "*No hay tarjetas con deuda en este banco.*",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("◀️ Volver", callback_data=f"bank_{bank_id}")]
+            ]),
+            parse_mode="Markdown",
+        )
+        return
+
+    context.user_data["pay_cards"] = {c["id"]: c for c in cards}
+    context.user_data["pay_bank_id"] = bank_id
+    keyboard = []
+    for c in cards:
+        pct = credit_pct(c["used_credit"], c["credit_limit"])
+        keyboard.append([
+            InlineKeyboardButton(
+                f"💳 {c['name']}: {fmt_money(c['used_credit'])} ({pct:.0f}%)",
+                callback_data=f"paycard_{c['id']}",
+            )
+        ])
+    keyboard.append([InlineKeyboardButton("◀️ Volver", callback_data=f"bank_{bank_id}")])
+
+    await query.edit_message_text(
+        "*Pagar Tarjeta*\nElige la tarjeta a pagar:",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="Markdown",
+    )
+
+
+async def pay_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+
+    if data.startswith("paycard_"):
+        card_id = data.replace("paycard_", "")
+        card = context.user_data.get("pay_cards", {}).get(card_id)
+        context.user_data["pay_card"] = card
+
+        accounts = await api_get("/api/accounts/all")
+        context.user_data["pay_accounts"] = {a["id"]: a for a in accounts}
+
+        keyboard = []
+        for a in accounts:
+            banks = context.user_data.get("banks", {})
+            bank_name = "Banco"
+            for b in banks.values():
+                if b["id"] == a["bank_id"]:
+                    bank_name = b["name"]
+                    break
+            keyboard.append([
+                InlineKeyboardButton(
+                    f"{bank_name} - {a['name']}: {fmt_money(a['balance'])}",
+                    callback_data=f"paysrc_{a['id']}",
+                )
+            ])
+        bank_id = context.user_data.get("pay_bank_id")
+        keyboard.append([InlineKeyboardButton("◀️ Volver", callback_data=f"bank_{bank_id}")])
+
+        await query.edit_message_text(
+            f"*Pagar {card['name']}*\nDeuda: {fmt_money(card['used_credit'])}\n\n"
+            f"Elige la cuenta para pagar:",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown",
+        )
+
+    elif data.startswith("paysrc_"):
+        account_id = data.replace("paysrc_", "")
+        context.user_data["pay_src_account"] = account_id
+        card = context.user_data.get("pay_card")
+
+        keyboard = [
+            [InlineKeyboardButton(
+                f"Pagar total: {fmt_money(card['used_credit'])}",
+                callback_data="payamt_total",
+            )],
+            [InlineKeyboardButton(
+                "Pago parcial",
+                callback_data="payamt_partial",
+            )],
+        ]
+        await query.edit_message_text(
+            f"*Pagar {card['name']}*\nDeuda: {fmt_money(card['used_credit'])}\n\n"
+            f"Cuanto quieres pagar?",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown",
+        )
+
+    elif data == "payamt_total":
+        card = context.user_data.get("pay_card")
+        context.user_data["pay_amount"] = card["used_credit"]
+        await confirm_pay(query, context)
+
+    elif data == "payamt_partial":
+        await query.edit_message_text(
+            "*Escribe el monto a pagar (solo numeros):*",
+            parse_mode="Markdown",
+        )
+        context.user_data["awaiting_pay_amount"] = True
+
+    elif data == "confirm_pay":
+        await execute_pay(query, context)
+
+    elif data == "cancel_pay":
+        bank_id = context.user_data.get("pay_bank_id")
+        await show_bank_detail(query, context, f"bank_{bank_id}")
+
+
+async def confirm_pay(query, context):
+    card = context.user_data.get("pay_card")
+    amount = context.user_data.get("pay_amount")
+    accounts = context.user_data.get("pay_accounts", {})
+    src_account = accounts.get(context.user_data.get("pay_src_account"), {})
+
+    keyboard = [
+        [InlineKeyboardButton("✅ Confirmar pago", callback_data="confirm_pay")],
+        [InlineKeyboardButton("❌ Cancelar", callback_data="cancel_pay")],
+    ]
+
+    await query.edit_message_text(
+        f"*Confirmar pago de tarjeta*\n\n"
+        f"💳 Tarjeta: {card['name']}\n"
+        f"💰 Pago: {fmt_money(amount)}\n"
+        f"🏦 Cuenta: {src_account.get('name', 'N/A')}\n"
+        f"📊 Deuda restante: {fmt_money(float(card['used_credit']) - amount)}",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="Markdown",
+    )
+
+
+async def execute_pay(query, context):
+    card = context.user_data.get("pay_card")
+    amount = context.user_data.get("pay_amount")
+    src_account_id = context.user_data.get("pay_src_account")
+    account = context.user_data.get("pay_accounts", {}).get(src_account_id, {})
+
+    if float(account.get("balance", 0)) < amount:
+        await query.edit_message_text(
+            "*Saldo insuficiente en la cuenta.*",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("◀️ Volver", callback_data="menu_main")]
+            ]),
+            parse_mode="Markdown",
+        )
+        return
+
+    await api_post("/api/transactions", {
+        "bank_id": card["bank_id"],
+        "account_id": src_account_id,
+        "type": "gasto",
+        "amount": amount,
+        "merchant": f"Pago tarjeta {card['name']}",
+        "category": "Pago tarjeta",
+        "description": f"Pago de tarjeta via Telegram",
+    })
+
+    await api_post("/api/transactions", {
+        "bank_id": card["bank_id"],
+        "credit_card_id": card["id"],
+        "type": "ingreso",
+        "amount": amount,
+        "merchant": "Pago recibido",
+        "category": "Pago tarjeta",
+        "description": f"Pago desde {account.get('name', 'cuenta')} via Telegram",
+    })
+
+    new_used = float(card["used_credit"]) - amount
+    pct = credit_pct(new_used, card["credit_limit"])
+
+    await query.edit_message_text(
+        f"*Pago realizado*\n\n"
+        f"💳 {card['name']}: {fmt_money(new_used)} / {fmt_money(card['credit_limit'])} ({pct:.0f}%)\n"
+        f"{credit_status(pct)}",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("◀️ Menu principal", callback_data="menu_main")]
+        ]),
+        parse_mode="Markdown",
+    )
+
+    context.user_data.pop("pay_card", None)
+    context.user_data.pop("pay_src_account", None)
+    context.user_data.pop("pay_amount", None)
+    context.user_data.pop("pay_bank_id", None)
+
+
+# ─── INCOME ───
+async def start_income(query, context, bank_id):
+    bd = await api_get(f"/api/banks/{bank_id}/data")
+    accounts = bd.get("accounts", [])
+
+    if not accounts:
+        await query.edit_message_text(
+            "*No hay cuentas en este banco.*",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("◀️ Volver", callback_data=f"bank_{bank_id}")]
+            ]),
+            parse_mode="Markdown",
+        )
+        return
+
+    context.user_data["income_accounts"] = {a["id"]: a for a in accounts}
+    context.user_data["income_bank_id"] = bank_id
+    keyboard = []
+    for a in accounts:
+        keyboard.append([
+            InlineKeyboardButton(
+                f"💰 {a['name']}: {fmt_money(a['balance'])}",
+                callback_data=f"incdst_{a['id']}",
+            )
+        ])
+    keyboard.append([InlineKeyboardButton("◀️ Volver", callback_data=f"bank_{bank_id}")])
+
+    await query.edit_message_text(
+        "*Registrar Ingreso*\nElige la cuenta destino:",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="Markdown",
+    )
+
+
+async def income_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+
+    if data.startswith("incdst_"):
+        account_id = data.replace("incdst_", "")
+        context.user_data["income_account"] = account_id
+        await query.edit_message_text(
+            "*Escribe el monto del ingreso (solo numeros):*",
+            parse_mode="Markdown",
+        )
+        context.user_data["awaiting_income_amount"] = True
+
+    elif data == "confirm_income":
+        await execute_income(query, context)
+
+    elif data == "cancel_income":
+        bank_id = context.user_data.get("income_bank_id")
+        await show_bank_detail(query, context, f"bank_{bank_id}")
+
+
+async def confirm_income_msg(query, context):
+    amount = context.user_data.get("income_amount")
+    account_id = context.user_data.get("income_account")
+    accounts = context.user_data.get("income_accounts", {})
+    account = accounts.get(account_id, {})
+
+    keyboard = [
+        [InlineKeyboardButton("✅ Confirmar", callback_data="confirm_income")],
+        [InlineKeyboardButton("❌ Cancelar", callback_data="cancel_income")],
+    ]
+
+    await query.edit_message_text(
+        f"*Confirmar ingreso*\n\n"
+        f"💰 Cuenta: {account.get('name', 'N/A')}\n"
+        f"💵 Monto: {fmt_money(amount)}\n"
+        f"📊 Saldo nuevo: {fmt_money(float(account.get('balance', 0)) + amount)}",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="Markdown",
+    )
+
+
+async def execute_income(query, context):
+    amount = context.user_data.get("income_amount")
+    account_id = context.user_data.get("income_account")
+    accounts = context.user_data.get("income_accounts", {})
+    account = accounts.get(account_id, {})
+
+    await api_post("/api/transactions", {
+        "bank_id": account["bank_id"],
+        "account_id": account_id,
+        "type": "ingreso",
+        "amount": amount,
+        "merchant": "Ingreso manual",
+        "category": "Ingreso",
+        "description": "Ingreso registrado via Telegram",
+    })
+
+    new_balance = float(account["balance"]) + amount
+
+    await query.edit_message_text(
+        f"*Ingreso registrado*\n\n"
+        f"💰 {account['name']}: {fmt_money(new_balance)}\n"
+        f"💵 Ingreso: {fmt_money(amount)}",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("◀️ Menu principal", callback_data="menu_main")]
+        ]),
+        parse_mode="Markdown",
+    )
+
+    context.user_data.pop("income_account", None)
+    context.user_data.pop("income_amount", None)
+    context.user_data.pop("income_accounts", None)
+    context.user_data.pop("income_bank_id", None)
+
+
+# ─── SUMMARY ───
+async def show_summary(query, context):
+    banks = await api_get("/api/banks")
     text = "*RESUMEN DE CREDITO*\n\n"
     total_used = 0
     total_limit = 0
 
     for b in banks:
-        data = await get_json(f"/api/banks/{b['id']}/data")
-        for c in data.get("credit_cards", []):
+        bd = await api_get(f"/api/banks/{b['id']}/data")
+        for c in bd.get("credit_cards", []):
             used = c["used_credit"]
             limit = c["credit_limit"]
-            pct = (used / limit * 100) if limit > 0 else 0
+            pct = credit_pct(used, limit)
             total_used += used
             total_limit += limit
-
-            status = "✅" if pct < 20 else "🟡" if pct < 30 else "🔴"
-            text += f"{status} *{b['name']}* - {c['name']}\n"
-            text += f"   ${used:,.0f} / ${limit:,.0f} ({pct:.1f}%)\n\n"
+            emoji = credit_emoji(pct)
+            text += f"{emoji} *{b['name']}* - {c['name']}\n"
+            text += f"   {fmt_money(used)} / {fmt_money(limit)} ({pct:.0f}%)\n\n"
 
     if total_limit > 0:
-        total_pct = (total_used / total_limit * 100)
-        text += (
-            f"*TOTAL:* ${total_used:,.0f} / ${total_limit:,.0f} ({total_pct:.1f}%)\n"
-        )
-        if total_pct >= 30:
-            text += "🔴 *ALERTA: Superaste el 30% global!*"
-        elif total_pct >= 20:
-            text += "🟡 *En rango ideal*"
-        else:
-            text += "✅ *Todo bien*"
+        total_pct = credit_pct(total_used, total_limit)
+        text += f"*TOTAL:* {fmt_money(total_used)} / {fmt_money(total_limit)} ({total_pct:.0f}%)\n"
+        text += credit_status(total_pct)
 
-    await update.message.reply_text(text, parse_mode="Markdown")
-
-
-# /ayuda
-async def ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "*Ayuda - CreditoSubaru Bot*\n\n"
-        "/bancos - Ver todas tus cuentas y tarjetas\n"
-        "/gasto - Registrar un gasto en tarjeta de credito\n"
-        "/resumen - Ver resumen de uso de credito\n\n"
-        "*Objetivo:* Usar entre 20-30% del credito\n"
-        "para mejorar tu historial crediticio.",
+    await query.edit_message_text(
+        text,
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("◀️ Menu principal", callback_data="menu_main")]
+        ]),
         parse_mode="Markdown",
     )
 
 
+# ─── HELP ───
+async def show_help(query):
+    await query.edit_message_text(
+        "*CreditoSubaru - Ayuda*\n\n"
+        "🏦 *Ver Bancos* - Ver cuentas y tarjetas por banco\n"
+        "📊 *Mi Resumen* - Uso global de credito\n"
+        "💸 *Transferir* - Mover dinero entre cuentas\n\n"
+        "Dentro de cada banco:\n"
+        "📜 Historial - Ultimos movimientos\n"
+        "💳 Pagar Tarjeta - Pagar deuda con una cuenta\n"
+        "📥 Ingreso - Agregar dinero a una cuenta\n\n"
+        "*Objetivo:* Usar 20-30% del credito\n"
+        "para mejorar tu historial crediticio.",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("◀️ Menu principal", callback_data="menu_main")]
+        ]),
+        parse_mode="Markdown",
+    )
+
+
+# ─── TEXT HANDLER (amounts) ───
+async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.replace(".", "").replace(",", "").strip()
+
+    if context.user_data.get("awaiting_transfer_amount"):
+        try:
+            amount = float(text)
+        except ValueError:
+            await update.message.reply_text("Monto invalido. Escribe solo numeros.")
+            return
+        context.user_data["awaiting_transfer_amount"] = False
+        context.user_data["transfer_amount"] = amount
+
+        src_id = context.user_data.get("transfer_src")
+        dst_id = context.user_data.get("transfer_dst")
+        accounts = context.user_data.get("all_accounts", {})
+        src = accounts.get(src_id, {})
+        dst = accounts.get(dst_id, {})
+
+        keyboard = [
+            [InlineKeyboardButton("✅ Confirmar", callback_data="confirm_transfer")],
+            [InlineKeyboardButton("❌ Cancelar", callback_data="cancel_transfer")],
+        ]
+
+        await update.message.reply_text(
+            f"*Confirmar transferencia*\n\n"
+            f"📤 {src.get('name', 'N/A')}: {fmt_money(float(src.get('balance', 0)))}\n"
+            f"📥 {dst.get('name', 'N/A')}: {fmt_money(float(dst.get('balance', 0)))}\n\n"
+            f"💵 Monto: {fmt_money(amount)}\n"
+            f"📊 Saldo origen despues: {fmt_money(float(src.get('balance', 0)) - amount)}\n"
+            f"📊 Saldo destino despues: {fmt_money(float(dst.get('balance', 0)) + amount)}",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown",
+        )
+
+    elif context.user_data.get("awaiting_pay_amount"):
+        try:
+            amount = float(text)
+        except ValueError:
+            await update.message.reply_text("Monto invalido. Escribe solo numeros.")
+            return
+        context.user_data["awaiting_pay_amount"] = False
+        context.user_data["pay_amount"] = amount
+
+        card = context.user_data.get("pay_card", {})
+        account_id = context.user_data.get("pay_src_account")
+        accounts = context.user_data.get("pay_accounts", {})
+        account = accounts.get(account_id, {})
+
+        keyboard = [
+            [InlineKeyboardButton("✅ Confirmar pago", callback_data="confirm_pay")],
+            [InlineKeyboardButton("❌ Cancelar", callback_data="cancel_pay")],
+        ]
+
+        await update.message.reply_text(
+            f"*Confirmar pago*\n\n"
+            f"💳 Tarjeta: {card.get('name', 'N/A')}\n"
+            f"💰 Pago: {fmt_money(amount)}\n"
+            f"🏦 Cuenta: {account.get('name', 'N/A')}\n"
+            f"📊 Deuda restante: {fmt_money(float(card.get('used_credit', 0)) - amount)}",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown",
+        )
+
+    elif context.user_data.get("awaiting_income_amount"):
+        try:
+            amount = float(text)
+        except ValueError:
+            await update.message.reply_text("Monto invalido. Escribe solo numeros.")
+            return
+        context.user_data["awaiting_income_amount"] = False
+        context.user_data["income_amount"] = amount
+        await confirm_income_msg(update.message, context)
+
+
+# ─── MAIN ───
 def main():
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     if not token:
-        print("ERROR: Define TELEGRAM_BOT_TOKEN")
+        print("ERROR: Define TELEGRAM_BOT_TOKEN", flush=True)
         return
 
     app = Application.builder().token(token).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("bancos", bancos))
-    app.add_handler(CommandHandler("gasto", gasto))
-    app.add_handler(CommandHandler("resumen", resumen))
-    app.add_handler(CommandHandler("ayuda", ayuda))
-    app.add_handler(CallbackQueryHandler(card_selected, pattern=r"^card_"))
-    app.add_handler(CallbackQueryHandler(transfer_yes, pattern=r"^transfer_"))
-    app.add_handler(CallbackQueryHandler(transfer_no, pattern=r"^cancel_transfer"))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, amount_received))
+    app.add_handler(CallbackQueryHandler(menu_callback, pattern=r"^(menu_|bank_|action_)"))
+    app.add_handler(CallbackQueryHandler(transfer_callback, pattern=r"^(tsrc_|tdst_|confirm_transfer|cancel_transfer)"))
+    app.add_handler(CallbackQueryHandler(pay_card_callback, pattern=r"^(paycard_|paysrc_|payamt_|confirm_pay|cancel_pay)"))
+    app.add_handler(CallbackQueryHandler(income_callback, pattern=r"^(incdst_|confirm_income|cancel_income)"))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
 
-    print("Bot started!")
+    print("Bot started!", flush=True)
     app.run_polling()
 
 
