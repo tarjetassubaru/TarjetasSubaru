@@ -58,6 +58,7 @@ def credit_status(pct: float) -> str:
 
 # ─── /start ───
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data.clear()
     keyboard = [
         [InlineKeyboardButton("🏦 Ver Bancos", callback_data="menu_banks")],
         [InlineKeyboardButton("📊 Mi Resumen", callback_data="menu_summary")],
