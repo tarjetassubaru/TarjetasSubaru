@@ -579,7 +579,7 @@ async def income_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await show_bank_detail(query, context, f"bank_{bank_id}")
 
 
-async def confirm_income_msg(query, context):
+async def confirm_income_msg(target, context):
     amount = context.user_data.get("income_amount")
     account_id = context.user_data.get("income_account")
     accounts = context.user_data.get("income_accounts", {})
@@ -590,14 +590,18 @@ async def confirm_income_msg(query, context):
         [InlineKeyboardButton("❌ Cancelar", callback_data="cancel_income")],
     ]
 
-    await query.edit_message_text(
+    text = (
         f"*Confirmar ingreso*\n\n"
         f"💰 Cuenta: {account.get('name', 'N/A')}\n"
         f"💵 Monto: {fmt_money(amount)}\n"
-        f"📊 Saldo nuevo: {fmt_money(float(account.get('balance', 0)) + amount)}",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode="Markdown",
+        f"📊 Saldo nuevo: {fmt_money(float(account.get('balance', 0)) + amount)}"
     )
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    if hasattr(target, "edit_message_text"):
+        await target.edit_message_text(text, reply_markup=reply_markup, parse_mode="Markdown")
+    else:
+        await target.reply_text(text, reply_markup=reply_markup, parse_mode="Markdown")
 
 
 async def execute_income(query, context):
@@ -763,6 +767,17 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ─── MAIN ───
+async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    print(f"BOT ERROR: {context.error}", flush=True)
+    if update and update.effective_message:
+        try:
+            await update.effective_message.reply_text(
+                "⚠️ Ocurrio un error. Intenta de nuevo con /start"
+            )
+        except Exception:
+            pass
+
+
 def main():
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     if not token:
@@ -777,6 +792,7 @@ def main():
     app.add_handler(CallbackQueryHandler(pay_card_callback, pattern=r"^(paycard_|paysrc_|payamt_|confirm_pay|cancel_pay)"))
     app.add_handler(CallbackQueryHandler(income_callback, pattern=r"^(incdst_|confirm_income|cancel_income)"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
+    app.add_error_handler(error_handler)
 
     print("Bot started!", flush=True)
     app.run_polling()
