@@ -125,13 +125,6 @@ class TransferCreate(BaseModel):
     description: str | None = None
 
 
-class TransferResponse(BaseModel):
-    source: AccountResponse
-    destination: AccountResponse
-    source_transaction: TransactionResponse
-    destination_transaction: TransactionResponse
-
-
 class TransactionCreate(BaseModel):
     bank_id: uuid.UUID
     account_id: uuid.UUID | None = None
@@ -156,6 +149,13 @@ class TransactionResponse(BaseModel):
     category: str | None
     description: str | None
     created_at: datetime
+
+
+class TransferResponse(BaseModel):
+    source: AccountResponse
+    destination: AccountResponse
+    source_transaction: TransactionResponse
+    destination_transaction: TransactionResponse
 
 
 class BankDataResponse(BaseModel):
