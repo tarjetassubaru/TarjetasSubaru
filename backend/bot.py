@@ -737,6 +737,7 @@ async def execute_expense(query, context):
     item = context.user_data.get("expense_card")
     amount = context.user_data.get("expense_amount")
     exp_type = context.user_data.get("expense_type")
+    desc = context.user_data.get("expense_description", "Gasto manual")
 
     if exp_type == "credit_card":
         await api_post("/api/transactions", {
@@ -744,9 +745,9 @@ async def execute_expense(query, context):
             "credit_card_id": item["id"],
             "type": "gasto",
             "amount": amount,
-            "merchant": "Gasto manual",
+            "merchant": desc,
             "category": "Manual",
-            "description": "Gasto registrado via Telegram",
+            "description": desc,
         })
         new_used = float(item["used_credit"]) + amount
         new_pct = credit_pct(new_used, item["credit_limit"])
@@ -785,9 +786,9 @@ async def execute_expense(query, context):
             "account_id": item["id"],
             "type": "gasto",
             "amount": amount,
-            "merchant": "Gasto manual",
+            "merchant": desc,
             "category": "Manual",
-            "description": "Gasto registrado via Telegram",
+            "description": desc,
         })
         new_balance = float(item["balance"]) - amount
         text = (
@@ -809,10 +810,12 @@ async def execute_expense(query, context):
     context.user_data.pop("expense_card", None)
     context.user_data.pop("expense_amount", None)
     context.user_data.pop("expense_type", None)
+    context.user_data.pop("expense_description", None)
     context.user_data.pop("expense_cards", None)
     context.user_data.pop("expense_accounts", None)
     context.user_data.pop("expense_bank_id", None)
     context.user_data.pop("awaiting_expense_amount", None)
+    context.user_data.pop("awaiting_expense_description", None)
 
 
 # ─── SUMMARY ───
@@ -962,6 +965,49 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             exp_type = context.user_data.get("expense_type")
 
             if exp_type == "credit_card":
+                balance = float(item.get("used_credit", 0)) + amount
+                limit = float(item.get("credit_limit", 0))
+                if balance > limit:
+                    await update.message.reply_text(
+                        f"*Excede el limite*\n\n"
+                        f"💳 {item.get('name', 'N/A')}: {fmt_money(limit)}\n"
+                        f"💵 Gasto: {fmt_money(amount)}\n"
+                        f"📊 Total seria: {fmt_money(balance)}",
+                        parse_mode="Markdown",
+                    )
+                    return
+            else:
+                balance = float(item.get("balance", 0))
+                if balance < amount:
+                    await update.message.reply_text(
+                        f"*Saldo insuficiente*\n\n"
+                        f"💰 {item.get('name', 'N/A')}: {fmt_money(balance)}\n"
+                        f"💵 Gasto: {fmt_money(amount)}",
+                        parse_mode="Markdown",
+                    )
+                    return
+
+            await update.message.reply_text(
+                "*Escribe que compraste* (ej: Bolas de queso/jalapeno):",
+                parse_mode="Markdown",
+            )
+            context.user_data["awaiting_expense_description"] = True
+        except Exception as e:
+            print(f"ERROR in expense flow: {e}", flush=True)
+            await update.message.reply_text(
+                "⚠️ Error al procesar. Intenta con /start"
+            )
+
+    elif context.user_data.get("awaiting_expense_description"):
+        context.user_data["awaiting_expense_description"] = False
+        context.user_data["expense_description"] = text
+        try:
+            item = context.user_data.get("expense_card", {})
+            exp_type = context.user_data.get("expense_type")
+            amount = context.user_data.get("expense_amount")
+            desc = text
+
+            if exp_type == "credit_card":
                 new_used = float(item.get("used_credit", 0)) + amount
                 new_pct = credit_pct(new_used, item.get("credit_limit", 0))
                 available = float(item.get("credit_limit", 0)) - new_used
@@ -974,6 +1020,7 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(
                     f"*Confirmar gasto*\n\n"
                     f"💳 {item.get('name', 'N/A')} (Credito)\n"
+                    f"📝 {desc}\n"
                     f"💵 Monto: {fmt_money(amount)}\n"
                     f"📊 Deuda nueva: {fmt_money(new_used)} / {fmt_money(item.get('credit_limit', 0))} ({new_pct:.0f}%)\n"
                     f"{credit_status(new_pct)}",
@@ -981,16 +1028,7 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     parse_mode="Markdown",
                 )
             else:
-                balance = float(item.get("balance", 0))
-                if balance < amount:
-                    await update.message.reply_text(
-                        f"*Saldo insuficiente*\n\n"
-                        f"💰 {item.get('name', 'N/A')}: {fmt_money(balance)}\n"
-                        f"💵 Gasto: {fmt_money(amount)}",
-                        parse_mode="Markdown",
-                    )
-                    return
-                new_balance = balance - amount
+                new_balance = float(item.get("balance", 0)) - amount
 
                 keyboard = [
                     [InlineKeyboardButton("✅ Confirmar gasto", callback_data="exec_expense")],
@@ -1000,6 +1038,7 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(
                     f"*Confirmar gasto*\n\n"
                     f"💰 {item.get('name', 'N/A')} (Debito)\n"
+                    f"📝 {desc}\n"
                     f"💵 Monto: {fmt_money(amount)}\n"
                     f"📊 Saldo nuevo: {fmt_money(new_balance)}",
                     reply_markup=InlineKeyboardMarkup(keyboard),
