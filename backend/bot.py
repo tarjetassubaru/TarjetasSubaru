@@ -154,6 +154,7 @@ async def show_bank_detail(query, context, data):
 
     context.user_data["current_bank_id"] = bank_id
     keyboard = [
+        [InlineKeyboardButton("🛒 Gasto Tarjeta", callback_data=f"action_expense_{bank_id}")],
         [InlineKeyboardButton("📜 Historial", callback_data=f"action_history_{bank_id}")],
         [InlineKeyboardButton("💸 Transferir", callback_data=f"action_transfer_{bank_id}")],
         [InlineKeyboardButton("💳 Pagar Tarjeta", callback_data=f"action_pay_{bank_id}")],
@@ -176,6 +177,8 @@ async def handle_bank_action(query, context, data):
 
     if action == "history":
         await show_history(query, context, bank_id)
+    elif action == "expense":
+        await start_expense(query, context, bank_id)
     elif action == "transfer":
         await start_transfer_from_bank(query, context, bank_id)
     elif action == "pay":
@@ -639,6 +642,123 @@ async def execute_income(query, context):
     context.user_data.pop("income_bank_id", None)
 
 
+# ─── EXPENSE (GASTO EN TARJETA) ───
+async def start_expense(query, context, bank_id):
+    bd = await api_get(f"/api/banks/{bank_id}/data")
+    cards = bd.get("credit_cards", [])
+
+    if not cards:
+        await query.edit_message_text(
+            "*No hay tarjetas de credito en este banco.*",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("◀️ Volver", callback_data=f"bank_{bank_id}")]
+            ]),
+            parse_mode="Markdown",
+        )
+        return
+
+    context.user_data["expense_cards"] = {c["id"]: c for c in cards}
+    context.user_data["expense_bank_id"] = bank_id
+    keyboard = []
+    for c in cards:
+        pct = credit_pct(c["used_credit"], c["credit_limit"])
+        available = float(c["credit_limit"]) - float(c["used_credit"])
+        keyboard.append([
+            InlineKeyboardButton(
+                f"💳 {c['name']}: {fmt_money(available)} disponible",
+                callback_data=f"expcard_{c['id']}",
+            )
+        ])
+    keyboard.append([InlineKeyboardButton("◀️ Volver", callback_data=f"bank_{bank_id}")])
+
+    await query.edit_message_text(
+        "*Gasto en Tarjeta*\nElige la tarjeta:",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="Markdown",
+    )
+
+
+async def expense_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+
+    if data.startswith("expcard_"):
+        card_id = data.replace("expcard_", "")
+        card = context.user_data.get("expense_cards", {}).get(card_id)
+        context.user_data["expense_card"] = card
+
+        pct = credit_pct(card["used_credit"], card["credit_limit"])
+        available = float(card["credit_limit"]) - float(card["used_credit"])
+
+        await query.edit_message_text(
+            f"*{card['name']}*\n\n"
+            f"Limite: {fmt_money(card['credit_limit'])}\n"
+            f"Usado: {fmt_money(card['used_credit'])} ({pct:.0f}%)\n"
+            f"Disponible: {fmt_money(available)}\n\n"
+            f"Escribe el monto del gasto (solo numeros):",
+            parse_mode="Markdown",
+        )
+        context.user_data["awaiting_expense_amount"] = True
+
+    elif data == "exec_expense":
+        await execute_expense(query, context)
+
+    elif data == "cancel_expense":
+        bank_id = context.user_data.get("expense_bank_id")
+        await show_bank_detail(query, context, f"bank_{bank_id}")
+
+
+async def execute_expense(query, context):
+    card = context.user_data.get("expense_card")
+    amount = context.user_data.get("expense_amount")
+
+    await api_post("/api/transactions", {
+        "bank_id": card["bank_id"],
+        "credit_card_id": card["id"],
+        "type": "gasto",
+        "amount": amount,
+        "merchant": "Gasto manual",
+        "category": "Manual",
+        "description": "Gasto registrado via Telegram",
+    })
+
+    new_used = float(card["used_credit"]) + amount
+    new_pct = credit_pct(new_used, card["credit_limit"])
+    available = float(card["credit_limit"]) - new_used
+
+    text = (
+        f"*Gasto registrado*\n\n"
+        f"💳 {card['name']}\n"
+        f"💵 Gasto: {fmt_money(amount)}\n"
+        f"📊 Deuda: {fmt_money(new_used)} / {fmt_money(card['credit_limit'])} ({new_pct:.0f}%)\n"
+        f"💰 Disponible: {fmt_money(available)}\n\n"
+    )
+
+    if new_pct >= 30:
+        text += "🔴 ALERTA: Superaste el 30%. No uses mas esta tarjeta."
+    elif new_pct >= 20:
+        remaining = float(card["credit_limit"]) * 0.3 - new_used
+        text += f"🟡 En rango ideal. Puedes usar {fmt_money(max(0, remaining))} mas."
+    else:
+        remaining = float(card["credit_limit"]) * 0.3 - new_used
+        text += f"✅ Vas bien. Puedes usar {fmt_money(remaining)} mas antes del 30%."
+
+    await query.edit_message_text(
+        text,
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("◀️ Menu principal", callback_data="menu_main")]
+        ]),
+        parse_mode="Markdown",
+    )
+
+    context.user_data.pop("expense_card", None)
+    context.user_data.pop("expense_amount", None)
+    context.user_data.pop("expense_cards", None)
+    context.user_data.pop("expense_bank_id", None)
+    context.user_data.pop("awaiting_expense_amount", None)
+
+
 # ─── SUMMARY ───
 async def show_summary(query, context):
     banks = await api_get("/api/banks")
@@ -680,6 +800,7 @@ async def show_help(query):
         "📊 *Mi Resumen* - Uso global de credito\n"
         "💸 *Transferir* - Mover dinero entre cuentas\n\n"
         "Dentro de cada banco:\n"
+        "🛒 Gasto - Registrar uso de tarjeta de credito\n"
         "📜 Historial - Ultimos movimientos\n"
         "💳 Pagar Tarjeta - Pagar deuda con una cuenta\n"
         "📥 Ingreso - Agregar dinero a una cuenta\n\n"
@@ -772,6 +893,40 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "⚠️ Error al procesar. Intenta con /start"
             )
 
+    elif context.user_data.get("awaiting_expense_amount"):
+        try:
+            amount = float(text)
+        except ValueError:
+            await update.message.reply_text("Monto invalido. Escribe solo numeros.")
+            return
+        context.user_data["awaiting_expense_amount"] = False
+        context.user_data["expense_amount"] = amount
+        try:
+            card = context.user_data.get("expense_card", {})
+            new_used = float(card.get("used_credit", 0)) + amount
+            new_pct = credit_pct(new_used, card.get("credit_limit", 0))
+            available = float(card.get("credit_limit", 0)) - new_used
+
+            keyboard = [
+                [InlineKeyboardButton("✅ Confirmar gasto", callback_data="exec_expense")],
+                [InlineKeyboardButton("❌ Cancelar", callback_data="cancel_expense")],
+            ]
+
+            await update.message.reply_text(
+                f"*Confirmar gasto*\n\n"
+                f"💳 Tarjeta: {card.get('name', 'N/A')}\n"
+                f"💵 Monto: {fmt_money(amount)}\n"
+                f"📊 Deuda nueva: {fmt_money(new_used)} / {fmt_money(card.get('credit_limit', 0))} ({new_pct:.0f}%)\n"
+                f"{credit_status(new_pct)}",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode="Markdown",
+            )
+        except Exception as e:
+            print(f"ERROR in expense confirm: {e}", flush=True)
+            await update.message.reply_text(
+                "⚠️ Error al procesar. Intenta con /start"
+            )
+
 
 # ─── MAIN ───
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -798,6 +953,7 @@ def main():
     app.add_handler(CallbackQueryHandler(transfer_callback, pattern=r"^(tsrc_|tdst_|confirm_transfer|cancel_transfer)"))
     app.add_handler(CallbackQueryHandler(pay_card_callback, pattern=r"^(paycard_|paysrc_|payamt_|confirm_pay|cancel_pay)"))
     app.add_handler(CallbackQueryHandler(income_callback, pattern=r"^(incdst_|confirm_income|cancel_income)"))
+    app.add_handler(CallbackQueryHandler(expense_callback, pattern=r"^(expcard_|exec_expense|cancel_expense)"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
     app.add_error_handler(error_handler)
 
