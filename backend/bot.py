@@ -140,7 +140,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         if not cond.get("met", False):
                             missing.append(cond.get("label", key))
                     if missing:
-                        text += f"   ⚠️ {', '.join(missing)}\n"
+                        text += f"\n   ⚠️ {', '.join(missing)}\n"
             except Exception:
                 pass
 
@@ -223,7 +223,7 @@ async def show_main_menu(query, context):
                         if not cond.get("met", False):
                             missing.append(cond.get("label", key))
                     if missing:
-                        text += f"   ⚠️ {', '.join(missing)}\n"
+                        text += f"\n   ⚠️ {', '.join(missing)}\n"
             except Exception:
                 pass
 
