@@ -130,61 +130,83 @@ async def show_banks_list(query, context):
 
 # ─── BANK DETAIL ───
 async def show_bank_detail(query, context, data):
-    bank_id = data.replace("bank_", "")
-    bank = context.user_data.get("banks", {}).get(bank_id)
-    if not bank:
-        banks = await api_get("/api/banks")
-        context.user_data["banks"] = {b["id"]: b for b in banks}
-        bank = context.user_data["banks"].get(bank_id)
+    try:
+        bank_id = data.replace("bank_", "")
+        bank = context.user_data.get("banks", {}).get(bank_id)
+        if not bank:
+            banks = await api_get("/api/banks")
+            context.user_data["banks"] = {b["id"]: b for b in banks}
+            bank = context.user_data["banks"].get(bank_id)
 
-    bd = await api_get(f"/api/banks/{bank_id}/data")
-    accounts = bd.get("accounts", [])
-    cards = bd.get("credit_cards", [])
+        if not bank:
+            await query.edit_message_text("Banco no encontrado. Intenta con /start")
+            return
 
-    text = f"*{bank['name']}*\n\n"
-    if accounts:
-        text += "Cuentas:\n"
-        for a in accounts:
-            text += f"  💰 {a['name']}: {fmt_money(a['balance'])}\n"
-    if cards:
-        text += "\nTarjetas:\n"
-        for c in cards:
-            pct = credit_pct(c["used_credit"], c["credit_limit"])
-            text += f"  💳 {c['name']}: {fmt_money(c['used_credit'])} / {fmt_money(c['credit_limit'])} ({pct:.0f}%)\n"
+        bd = await api_get(f"/api/banks/{bank_id}/data")
+        accounts = bd.get("accounts", [])
+        cards = bd.get("credit_cards", [])
 
-    context.user_data["current_bank_id"] = bank_id
-    keyboard = [
-        [InlineKeyboardButton("🛒 Gasto Tarjeta", callback_data=f"action_expense_{bank_id}")],
-        [InlineKeyboardButton("📜 Historial", callback_data=f"action_history_{bank_id}")],
-        [InlineKeyboardButton("💸 Transferir", callback_data=f"action_transfer_{bank_id}")],
-        [InlineKeyboardButton("💳 Pagar Tarjeta", callback_data=f"action_pay_{bank_id}")],
-        [InlineKeyboardButton("📥 Registrar Ingreso", callback_data=f"action_income_{bank_id}")],
-        [InlineKeyboardButton("◀️ Volver", callback_data="menu_banks")],
-    ]
+        text = f"*{bank['name']}*\n\n"
+        if accounts:
+            text += "Cuentas:\n"
+            for a in accounts:
+                text += f"  💰 {a['name']}: {fmt_money(a['balance'])}\n"
+        if cards:
+            text += "\nTarjetas:\n"
+            for c in cards:
+                pct = credit_pct(c["used_credit"], c["credit_limit"])
+                text += f"  💳 {c['name']}: {fmt_money(c['used_credit'])} / {fmt_money(c['credit_limit'])} ({pct:.0f}%)\n"
 
-    await query.edit_message_text(
-        text,
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode="Markdown",
-    )
+        context.user_data["current_bank_id"] = bank_id
+        keyboard = [
+            [InlineKeyboardButton("🛒 Gasto Tarjeta", callback_data=f"action_expense_{bank_id}")],
+            [InlineKeyboardButton("📜 Historial", callback_data=f"action_history_{bank_id}")],
+            [InlineKeyboardButton("💸 Transferir", callback_data=f"action_transfer_{bank_id}")],
+            [InlineKeyboardButton("💳 Pagar Tarjeta", callback_data=f"action_pay_{bank_id}")],
+            [InlineKeyboardButton("📥 Registrar Ingreso", callback_data=f"action_income_{bank_id}")],
+            [InlineKeyboardButton("◀️ Volver", callback_data="menu_banks")],
+        ]
+
+        await query.edit_message_text(
+            text,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown",
+        )
+    except Exception as e:
+        print(f"ERROR in show_bank_detail: {e}", flush=True)
+        import traceback
+        print(traceback.format_exc(), flush=True)
+        try:
+            await query.edit_message_text("Error al cargar banco. Intenta con /start")
+        except Exception:
+            pass
 
 
 # ─── BANK ACTIONS ───
 async def handle_bank_action(query, context, data):
-    parts = data.split("_", 2)
-    action = parts[1]
-    bank_id = parts[2] if len(parts) > 2 else context.user_data.get("current_bank_id")
+    try:
+        parts = data.split("_", 2)
+        action = parts[1]
+        bank_id = parts[2] if len(parts) > 2 else context.user_data.get("current_bank_id")
 
-    if action == "history":
-        await show_history(query, context, bank_id)
-    elif action == "expense":
-        await start_expense(query, context, bank_id)
-    elif action == "transfer":
-        await start_transfer_from_bank(query, context, bank_id)
-    elif action == "pay":
-        await start_pay_card(query, context, bank_id)
-    elif action == "income":
-        await start_income(query, context, bank_id)
+        if action == "history":
+            await show_history(query, context, bank_id)
+        elif action == "expense":
+            await start_expense(query, context, bank_id)
+        elif action == "transfer":
+            await start_transfer_from_bank(query, context, bank_id)
+        elif action == "pay":
+            await start_pay_card(query, context, bank_id)
+        elif action == "income":
+            await start_income(query, context, bank_id)
+    except Exception as e:
+        print(f"ERROR in handle_bank_action: {e}", flush=True)
+        import traceback
+        print(traceback.format_exc(), flush=True)
+        try:
+            await query.edit_message_text("Error. Intenta con /start")
+        except Exception:
+            pass
 
 
 # ─── HISTORY ───
@@ -691,51 +713,61 @@ async def expense_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
+    print(f"EXPENSE CALLBACK: {data}, user_data keys: {list(context.user_data.keys())}", flush=True)
 
-    if data.startswith("expcard_"):
-        card_id = data.replace("expcard_", "")
-        card = context.user_data.get("expense_cards", {}).get(card_id)
-        context.user_data["expense_card"] = card
-        context.user_data["expense_type"] = "credit_card"
+    try:
+        if data.startswith("expcard_"):
+            card_id = data.replace("expcard_", "")
+            card = context.user_data.get("expense_cards", {}).get(card_id)
+            context.user_data["expense_card"] = card
+            context.user_data["expense_type"] = "credit_card"
 
-        pct_clp = credit_pct(card["used_credit"], card["credit_limit"])
-        avail_clp = float(card["credit_limit"]) - float(card["used_credit"])
-        pct_usd = credit_pct(card.get("used_credit_usd", 0), card.get("credit_limit_usd", 0))
-        avail_usd = float(card.get("credit_limit_usd", 0)) - float(card.get("used_credit_usd", 0))
+            pct_clp = credit_pct(card["used_credit"], card["credit_limit"])
+            avail_clp = float(card["credit_limit"]) - float(card["used_credit"])
+            pct_usd = credit_pct(card.get("used_credit_usd", 0), card.get("credit_limit_usd", 0))
+            avail_usd = float(card.get("credit_limit_usd", 0)) - float(card.get("used_credit_usd", 0))
 
-        text = f"*{card['name']}* (Credito)\n\n"
-        if float(card.get("credit_limit", 0)) > 0:
-            text += f"🇨🇱 CLP: {fmt_money(card['used_credit'])} / {fmt_money(card['credit_limit'])} ({pct_clp:.0f}%) - Disp: {fmt_money(avail_clp)}\n"
-        if float(card.get("credit_limit_usd", 0)) > 0:
-            text += f"🇺🇸 USD: {fmt_money(card.get('used_credit_usd', 0))} / {fmt_money(card.get('credit_limit_usd', 0))} ({pct_usd:.0f}%) - Disp: {fmt_money(avail_usd)}\n"
-        text += "\nEscribe el monto del gasto (solo numeros):"
+            text = f"*{card['name']}* (Credito)\n\n"
+            if float(card.get("credit_limit", 0)) > 0:
+                text += f"🇨🇱 CLP: {fmt_money(card['used_credit'])} / {fmt_money(card['credit_limit'])} ({pct_clp:.0f}%) - Disp: {fmt_money(avail_clp)}\n"
+            if float(card.get("credit_limit_usd", 0)) > 0:
+                text += f"🇺🇸 USD: {fmt_money(card.get('used_credit_usd', 0))} / {fmt_money(card.get('credit_limit_usd', 0))} ({pct_usd:.0f}%) - Disp: {fmt_money(avail_usd)}\n"
+            text += "\nEscribe el monto del gasto (solo numeros):"
 
-        await query.edit_message_text(
-            text,
-            parse_mode="Markdown",
-        )
-        context.user_data["awaiting_expense_amount"] = True
+            await query.edit_message_text(
+                text,
+                parse_mode="Markdown",
+            )
+            context.user_data["awaiting_expense_amount"] = True
 
-    elif data.startswith("expacc_"):
-        account_id = data.replace("expacc_", "")
-        account = context.user_data.get("expense_accounts", {}).get(account_id)
-        context.user_data["expense_card"] = account
-        context.user_data["expense_type"] = "account"
+        elif data.startswith("expacc_"):
+            account_id = data.replace("expacc_", "")
+            account = context.user_data.get("expense_accounts", {}).get(account_id)
+            context.user_data["expense_card"] = account
+            context.user_data["expense_type"] = "account"
 
-        await query.edit_message_text(
-            f"*{account['name']}* (Debito)\n\n"
-            f"Saldo: {fmt_money(account['balance'])}\n\n"
-            f"Escribe el monto del gasto (solo numeros):",
-            parse_mode="Markdown",
-        )
-        context.user_data["awaiting_expense_amount"] = True
+            await query.edit_message_text(
+                f"*{account['name']}* (Debito)\n\n"
+                f"Saldo: {fmt_money(account['balance'])}\n\n"
+                f"Escribe el monto del gasto (solo numeros):",
+                parse_mode="Markdown",
+            )
+            context.user_data["awaiting_expense_amount"] = True
 
-    elif data == "exec_expense":
-        await execute_expense(query, context)
+        elif data == "exec_expense":
+            await execute_expense(query, context)
 
-    elif data == "cancel_expense":
-        bank_id = context.user_data.get("expense_bank_id")
-        await show_bank_detail(query, context, f"bank_{bank_id}")
+        elif data == "cancel_expense":
+            bank_id = context.user_data.get("expense_bank_id")
+            await show_bank_detail(query, context, f"bank_{bank_id}")
+    except Exception as e:
+        print(f"ERROR in expense_callback: {e}", flush=True)
+        import traceback
+        print(traceback.format_exc(), flush=True)
+        try:
+            await query.edit_message_text("Error. Intenta con /start")
+        except Exception:
+            pass
 
 
 async def execute_expense(query, context):
@@ -1164,7 +1196,12 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ─── MAIN ───
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    import traceback
     print(f"BOT ERROR: {context.error}", flush=True)
+    print(f"TRACEBACK: {traceback.format_exc()}", flush=True)
+    if update and update.callback_query:
+        print(f"CALLBACK DATA: {update.callback_query.data}", flush=True)
+    print(f"USER_DATA: {dict(context.user_data)}", flush=True)
     if update and update.effective_message:
         try:
             await update.effective_message.reply_text(
