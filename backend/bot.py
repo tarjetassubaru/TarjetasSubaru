@@ -147,6 +147,25 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 pass
 
+    total_clp = 0
+    total_usd = 0
+    for b in banks:
+        bid = b["id"]
+        bd = bank_data.get(bid, {})
+        for c in bd.get("credit_cards", []):
+            total_clp += float(c["used_credit"])
+            total_usd += float(c.get("used_credit_usd", 0))
+
+    USD_TO_CLP = 950
+    total_usd_clp = total_usd * USD_TO_CLP
+    total_deuda = total_clp + total_usd_clp
+
+    text += "\n━━━━━━━━━━━━━━━━━━━━\n"
+    text += "💰 *DEUDA TOTAL A PAGAR*\n"
+    text += f"   🇨🇱 CLP: {fmt(total_clp)}\n"
+    if total_usd > 0:
+        text += f"   🇺🇸 USD: {fmt_usd(total_usd)} (~{fmt(total_usd_clp)})\n"
+    text += f"   💵 Total: *{fmt(total_deuda)}*\n"
     text += "\n━━━━━━━━━━━━━━━━━━━━"
 
     keyboard = [
@@ -233,6 +252,25 @@ async def show_main_menu(query, context):
             except Exception:
                 pass
 
+    total_clp = 0
+    total_usd = 0
+    for b in banks:
+        bid = b["id"]
+        bd = bank_data.get(bid, {})
+        for c in bd.get("credit_cards", []):
+            total_clp += float(c["used_credit"])
+            total_usd += float(c.get("used_credit_usd", 0))
+
+    USD_TO_CLP = 950
+    total_usd_clp = total_usd * USD_TO_CLP
+    total_deuda = total_clp + total_usd_clp
+
+    text += "\n━━━━━━━━━━━━━━━━━━━━\n"
+    text += "💰 *DEUDA TOTAL A PAGAR*\n"
+    text += f"   🇨🇱 CLP: {fmt(total_clp)}\n"
+    if total_usd > 0:
+        text += f"   🇺🇸 USD: {fmt_usd(total_usd)} (~{fmt(total_usd_clp)})\n"
+    text += f"   💵 Total: *{fmt(total_deuda)}*\n"
     text += "\n━━━━━━━━━━━━━━━━━━━━"
 
     keyboard = [
