@@ -186,12 +186,21 @@ async def delete_bank(bank_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     await db.commit()
 
 
-@app.get("/api/banks/{bank_id}/data", response_model=BankDataResponse)
+@app.get("/api/banks/{bank_id}/data")
 async def get_bank_data(bank_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
-    accounts = (await db.execute(select(Account).where(Account.bank_id == bank_id).order_by(Account.created_at))).scalars().all()
-    cards = (await db.execute(select(CreditCard).where(CreditCard.bank_id == bank_id).order_by(CreditCard.created_at))).scalars().all()
-    txns = (await db.execute(select(Transaction).where(Transaction.bank_id == bank_id).order_by(Transaction.created_at.desc()).limit(20))).scalars().all()
-    return BankDataResponse(accounts=accounts, credit_cards=cards, transactions=txns)
+    try:
+        accounts = (await db.execute(select(Account).where(Account.bank_id == bank_id).order_by(Account.created_at))).scalars().all()
+        cards = (await db.execute(select(CreditCard).where(CreditCard.bank_id == bank_id).order_by(CreditCard.created_at))).scalars().all()
+        txns = (await db.execute(select(Transaction).where(Transaction.bank_id == bank_id).order_by(Transaction.created_at.desc()).limit(20))).scalars().all()
+        return BankDataResponse(
+            accounts=[AccountResponse.model_validate(a, from_attributes=True) for a in accounts],
+            credit_cards=[CreditCardResponse.model_validate(c, from_attributes=True) for c in cards],
+            transactions=[TransactionResponse.model_validate(t, from_attributes=True) for t in txns],
+        )
+    except Exception as e:
+        logger.error(f"Error in get_bank_data: {e}", exc_info=True)
+        import traceback
+        return {"error": str(e), "traceback": traceback.format_exc()}
 
 
 @app.get("/api/accounts", response_model=list[AccountResponse])
@@ -282,10 +291,16 @@ async def delete_account(account_id: uuid.UUID, db: AsyncSession = Depends(get_d
     await db.commit()
 
 
-@app.get("/api/credit-cards", response_model=list[CreditCardResponse])
+@app.get("/api/credit-cards")
 async def list_credit_cards(bank_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(CreditCard).where(CreditCard.bank_id == bank_id).order_by(CreditCard.created_at))
-    return result.scalars().all()
+    try:
+        result = await db.execute(select(CreditCard).where(CreditCard.bank_id == bank_id).order_by(CreditCard.created_at))
+        cards = result.scalars().all()
+        return [CreditCardResponse.model_validate(c, from_attributes=True) for c in cards]
+    except Exception as e:
+        logger.error(f"Error in list_credit_cards: {e}", exc_info=True)
+        import traceback
+        return {"error": str(e), "traceback": traceback.format_exc()}
 
 
 @app.post("/api/credit-cards", response_model=CreditCardResponse, status_code=status.HTTP_201_CREATED)
@@ -382,12 +397,18 @@ async def transfer_between_accounts(data: TransferCreate, db: AsyncSession = Dep
     )
 
 
-@app.get("/api/transactions", response_model=list[TransactionResponse])
+@app.get("/api/transactions")
 async def list_transactions(bank_id: uuid.UUID, limit: int = 20, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(
-        select(Transaction).where(Transaction.bank_id == bank_id).order_by(Transaction.created_at.desc()).limit(limit)
-    )
-    return result.scalars().all()
+    try:
+        result = await db.execute(
+            select(Transaction).where(Transaction.bank_id == bank_id).order_by(Transaction.created_at.desc()).limit(limit)
+        )
+        txns = result.scalars().all()
+        return [TransactionResponse.model_validate(t, from_attributes=True) for t in txns]
+    except Exception as e:
+        logger.error(f"Error in list_transactions: {e}", exc_info=True)
+        import traceback
+        return {"error": str(e), "traceback": traceback.format_exc()}
 
 
 @app.post("/api/transactions", response_model=TransactionResponse, status_code=status.HTTP_201_CREATED)
