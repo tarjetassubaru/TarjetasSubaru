@@ -423,3 +423,49 @@ async def create_transaction(data: TransactionCreate, db: AsyncSession = Depends
     await db.commit()
     await db.refresh(transaction)
     return transaction
+
+
+@app.get("/api/banks/{bank_id}/rewards")
+async def get_bank_rewards(bank_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Bank).where(Bank.id == bank_id))
+    bank = result.scalar_one_or_none()
+    if not bank:
+        raise HTTPException(status_code=404, detail="Bank not found")
+
+    now = datetime.now(timezone.utc)
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+    txn_result = await db.execute(
+        select(Transaction).where(
+            Transaction.bank_id == bank_id,
+            Transaction.created_at >= month_start,
+        )
+    )
+    txns = txn_result.scalars().all()
+
+    depositos = [t for t in txns if t.type == "ingreso" and t.category != "Pago tarjeta" and t.category != "Intereses"]
+    compras = [t for t in txns if t.type == "gasto"]
+
+    total_depositado = sum(float(t.amount) for t in depositos)
+    tiene_deposito_50k = total_depositado >= 50000
+    num_compras = len(compras)
+    tiene_4_compras = num_compras >= 4
+
+    return {
+        "bank_id": str(bank_id),
+        "bank_name": bank.name,
+        "month": now.strftime("%Y-%m"),
+        "conditions": {
+            "deposito_minimo": {
+                "required": 50000,
+                "current": total_depositado,
+                "met": tiene_deposito_50k,
+            },
+            "compras_minimas": {
+                "required": 4,
+                "current": num_compras,
+                "met": tiene_4_compras,
+            },
+        },
+        "free_maintenance": tiene_deposito_50k and tiene_4_compras,
+    }

@@ -302,7 +302,7 @@ async def show_bank_detail(query, context, data):
         if not bank:
             banks = await api_get("/api/banks")
             context.user_data["banks"] = {b["id"]: b for b in banks}
-            bank = context.user_data["banks"].get(bank_id)
+            bank = context.user_data.get("banks", {}).get(bank_id)
 
         if not bank:
             await query.edit_message_text("Banco no encontrado. Intenta con /start")
@@ -340,6 +340,36 @@ async def show_bank_detail(query, context, data):
                     text += f"   🇺🇸 USD {bar(p_u)} {p_u:.0f}%\n"
                     text += f"   Deuda: {fmt_usd(c.get('used_credit_usd', 0))} / {fmt_usd(c.get('credit_limit_usd', 0))}\n"
                     text += f"   Disp: {fmt_usd(avail_usd)}\n"
+
+        try:
+            rewards = await api_get(f"/api/banks/{bank_id}/rewards")
+            conds = rewards.get("conditions", {})
+            free = rewards.get("free_maintenance", False)
+
+            text += "\n━━━━━━━━━━━━━━━━━━━━\n"
+            text += "🎁 *MANTENCION GRATIS*\n"
+
+            dep = conds.get("deposito_minimo", {})
+            dep_met = dep.get("met", False)
+            dep_icon = "✅" if dep_met else "❌"
+            text += f"   {dep_icon} Deposito >= {fmt(dep.get('required', 50000))}: {fmt(dep.get('current', 0))}\n"
+
+            comp = conds.get("compras_minimas", {})
+            comp_met = comp.get("met", False)
+            comp_icon = "✅" if comp_met else "❌"
+            text += f"   {comp_icon} Compras >= {comp.get('required', 4)}: {comp.get('current', 0)} este mes\n"
+
+            if free:
+                text += "\n   🎉 *CUMPLES! Mantencion GRATIS este mes*\n"
+            else:
+                missing = []
+                if not dep_met:
+                    missing.append(f"depos. {fmt(dep.get('required', 50000) - dep.get('current', 0))}")
+                if not comp_met:
+                    missing.append(f"{comp.get('required', 4) - comp.get('current', 0)} compras mas")
+                text += f"\n   ⚠️ Te falta: {', '.join(missing)}\n"
+        except Exception:
+            pass
 
         text += "\n━━━━━━━━━━━━━━━━━━━━"
 
