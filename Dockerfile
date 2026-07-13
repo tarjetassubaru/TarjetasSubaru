@@ -12,4 +12,4 @@ ENV API_URL=https://tarjetassubaru-production.up.railway.app
 
 EXPOSE 8000
 
-CMD ["sh", "-c", "python migrate_neon.py; python seed.py; bash start.sh"]
+CMD ["bash", "start.sh"]
