@@ -84,6 +84,8 @@ class CreditCardCreate(BaseModel):
     franchise: str = "visa"
     credit_limit: float = 0
     used_credit: float = 0
+    credit_limit_usd: float = 0
+    used_credit_usd: float = 0
     closing_day: int = 1
     payment_day: int = 10
     card_number: str | None = None
@@ -95,6 +97,8 @@ class CreditCardUpdate(BaseModel):
     franchise: str | None = None
     credit_limit: float | None = None
     used_credit: float | None = None
+    credit_limit_usd: float | None = None
+    used_credit_usd: float | None = None
     closing_day: int | None = None
     payment_day: int | None = None
     card_number: str | None = None
@@ -110,6 +114,8 @@ class CreditCardResponse(BaseModel):
     franchise: str
     credit_limit: float
     used_credit: float
+    credit_limit_usd: float
+    used_credit_usd: float
     closing_day: int
     payment_day: int
     card_number: str | None
@@ -131,6 +137,7 @@ class TransactionCreate(BaseModel):
     credit_card_id: uuid.UUID | None = None
     type: str
     amount: float
+    currency: str = "CLP"
     merchant: str | None = None
     category: str | None = None
     description: str | None = None
@@ -145,6 +152,7 @@ class TransactionResponse(BaseModel):
     credit_card_id: uuid.UUID | None
     type: str
     amount: float
+    currency: str
     merchant: str | None
     category: str | None
     description: str | None

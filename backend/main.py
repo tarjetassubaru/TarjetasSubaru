@@ -408,9 +408,15 @@ async def create_transaction(data: TransactionCreate, db: AsyncSession = Depends
         if not card:
             raise HTTPException(status_code=404, detail="Credit card not found")
         if data.type == "gasto":
-            card.used_credit = float(card.used_credit) + data.amount
+            if data.currency == "USD":
+                card.used_credit_usd = float(card.used_credit_usd) + data.amount
+            else:
+                card.used_credit = float(card.used_credit) + data.amount
         else:
-            card.used_credit = max(0, float(card.used_credit) - data.amount)
+            if data.currency == "USD":
+                card.used_credit_usd = max(0, float(card.used_credit_usd) - data.amount)
+            else:
+                card.used_credit = max(0, float(card.used_credit) - data.amount)
 
     transaction = Transaction(**data.model_dump())
     db.add(transaction)

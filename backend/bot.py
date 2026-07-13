@@ -698,15 +698,20 @@ async def expense_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["expense_card"] = card
         context.user_data["expense_type"] = "credit_card"
 
-        pct = credit_pct(card["used_credit"], card["credit_limit"])
-        available = float(card["credit_limit"]) - float(card["used_credit"])
+        pct_clp = credit_pct(card["used_credit"], card["credit_limit"])
+        avail_clp = float(card["credit_limit"]) - float(card["used_credit"])
+        pct_usd = credit_pct(card.get("used_credit_usd", 0), card.get("credit_limit_usd", 0))
+        avail_usd = float(card.get("credit_limit_usd", 0)) - float(card.get("used_credit_usd", 0))
+
+        text = f"*{card['name']}* (Credito)\n\n"
+        if float(card.get("credit_limit", 0)) > 0:
+            text += f"🇨🇱 CLP: {fmt_money(card['used_credit'])} / {fmt_money(card['credit_limit'])} ({pct_clp:.0f}%) - Disp: {fmt_money(avail_clp)}\n"
+        if float(card.get("credit_limit_usd", 0)) > 0:
+            text += f"🇺🇸 USD: {fmt_money(card.get('used_credit_usd', 0))} / {fmt_money(card.get('credit_limit_usd', 0))} ({pct_usd:.0f}%) - Disp: {fmt_money(avail_usd)}\n"
+        text += "\nEscribe el monto del gasto (solo numeros):"
 
         await query.edit_message_text(
-            f"*{card['name']}* (Credito)\n\n"
-            f"Limite: {fmt_money(card['credit_limit'])}\n"
-            f"Usado: {fmt_money(card['used_credit'])} ({pct:.0f}%)\n"
-            f"Disponible: {fmt_money(available)}\n\n"
-            f"Escribe el monto del gasto (solo numeros):",
+            text,
             parse_mode="Markdown",
         )
         context.user_data["awaiting_expense_amount"] = True
@@ -737,6 +742,7 @@ async def execute_expense(query, context):
     item = context.user_data.get("expense_card")
     amount = context.user_data.get("expense_amount")
     exp_type = context.user_data.get("expense_type")
+    currency = context.user_data.get("expense_currency", "CLP")
     desc = context.user_data.get("expense_description", "Gasto manual")
 
     if exp_type == "credit_card":
@@ -745,29 +751,55 @@ async def execute_expense(query, context):
             "credit_card_id": item["id"],
             "type": "gasto",
             "amount": amount,
+            "currency": currency,
             "merchant": desc,
             "category": "Manual",
             "description": desc,
         })
-        new_used = float(item["used_credit"]) + amount
-        new_pct = credit_pct(new_used, item["credit_limit"])
-        available = float(item["credit_limit"]) - new_used
+        if currency == "USD":
+            new_used = float(item.get("used_credit_usd", 0)) + amount
+            limit = float(item.get("credit_limit_usd", 0))
+            new_pct = credit_pct(new_used, limit)
+            available = limit - new_used
 
-        text = (
-            f"*Gasto registrado*\n\n"
-            f"💳 {item['name']}\n"
-            f"💵 Gasto: {fmt_money(amount)}\n"
-            f"📊 Deuda: {fmt_money(new_used)} / {fmt_money(item['credit_limit'])} ({new_pct:.0f}%)\n"
-            f"💰 Disponible: {fmt_money(available)}\n\n"
-        )
-        if new_pct >= 30:
-            text += "🔴 ALERTA: Superaste el 30%. No uses mas esta tarjeta."
-        elif new_pct >= 20:
-            remaining = float(item["credit_limit"]) * 0.3 - new_used
-            text += f"🟡 En rango ideal. Puedes usar {fmt_money(max(0, remaining))} mas."
+            text = (
+                f"*Gasto registrado*\n\n"
+                f"💳 {item['name']}\n"
+                f"📝 {desc}\n"
+                f"💵 Gasto: ${amount:.2f} USD\n"
+                f"📊 Deuda: ${new_used:.2f} / ${limit:.2f} USD ({new_pct:.0f}%)\n"
+                f"💰 Disponible: ${available:.2f} USD\n\n"
+            )
+            if new_pct >= 30:
+                text += "🔴 ALERTA: Superaste el 30%. No uses mas esta tarjeta."
+            elif new_pct >= 20:
+                remaining = limit * 0.3 - new_used
+                text += f"🟡 En rango ideal. Puedes usar ${max(0, remaining):.2f} USD mas."
+            else:
+                remaining = limit * 0.3 - new_used
+                text += f"✅ Vas bien. Puedes usar ${remaining:.2f} USD mas antes del 30%."
         else:
-            remaining = float(item["credit_limit"]) * 0.3 - new_used
-            text += f"✅ Vas bien. Puedes usar {fmt_money(remaining)} mas antes del 30%."
+            new_used = float(item.get("used_credit", 0)) + amount
+            limit = float(item.get("credit_limit", 0))
+            new_pct = credit_pct(new_used, limit)
+            available = limit - new_used
+
+            text = (
+                f"*Gasto registrado*\n\n"
+                f"💳 {item['name']}\n"
+                f"📝 {desc}\n"
+                f"💵 Gasto: {fmt_money(amount)} CLP\n"
+                f"📊 Deuda: {fmt_money(new_used)} / {fmt_money(limit)} ({new_pct:.0f}%)\n"
+                f"💰 Disponible: {fmt_money(available)} CLP\n\n"
+            )
+            if new_pct >= 30:
+                text += "🔴 ALERTA: Superaste el 30%. No uses mas esta tarjeta."
+            elif new_pct >= 20:
+                remaining = limit * 0.3 - new_used
+                text += f"🟡 En rango ideal. Puedes usar {fmt_money(max(0, remaining))} mas."
+            else:
+                remaining = limit * 0.3 - new_used
+                text += f"✅ Vas bien. Puedes usar {fmt_money(remaining)} mas antes del 30%."
     else:
         if float(item["balance"]) < amount:
             await query.edit_message_text(
@@ -816,6 +848,58 @@ async def execute_expense(query, context):
     context.user_data.pop("expense_bank_id", None)
     context.user_data.pop("awaiting_expense_amount", None)
     context.user_data.pop("awaiting_expense_description", None)
+
+
+async def ask_expense_description(target, context):
+    if hasattr(target, "reply_text"):
+        await target.reply_text(
+            "*Escribe que compraste* (ej: Bolas de queso/jalapeno):",
+            parse_mode="Markdown",
+        )
+    else:
+        await target.edit_message_text(
+            "*Escribe que compraste* (ej: Bolas de queso/jalapeno):",
+            parse_mode="Markdown",
+        )
+    context.user_data["awaiting_expense_description"] = True
+
+
+async def currency_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+
+    if data.startswith("expcurr_"):
+        currency = data.replace("expcurr_", "")
+        context.user_data["expense_currency"] = currency
+        context.user_data["awaiting_expense_currency"] = False
+        item = context.user_data.get("expense_card", {})
+        amount = context.user_data.get("expense_amount")
+
+        if currency == "USD":
+            used = float(item.get("used_credit_usd", 0))
+            limit = float(item.get("credit_limit_usd", 0))
+        else:
+            used = float(item.get("used_credit", 0))
+            limit = float(item.get("credit_limit", 0))
+
+        if used + amount > limit:
+            sym = "$" if currency == "CLP" else "$"
+            fmt = fmt_money if currency == "CLP" else lambda x: f"${x:.2f}"
+            await query.edit_message_text(
+                f"*Excede el limite*\n\n"
+                f"💳 {item.get('name', 'N/A')}\n"
+                f"💵 Gasto: {fmt(amount)} {currency}\n"
+                f"📊 Limite: {fmt(limit)} {currency}",
+                parse_mode="Markdown",
+            )
+            return
+
+        await query.edit_message_text(
+            "*Escribe que compraste* (ej: Bolas de queso/jalapeno):",
+            parse_mode="Markdown",
+        )
+        context.user_data["awaiting_expense_description"] = True
 
 
 # ─── SUMMARY ───
@@ -965,18 +1049,23 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             exp_type = context.user_data.get("expense_type")
 
             if exp_type == "credit_card":
-                balance = float(item.get("used_credit", 0)) + amount
-                limit = float(item.get("credit_limit", 0))
-                if balance > limit:
+                has_usd = float(item.get("credit_limit_usd", 0)) > 0
+                if has_usd:
+                    keyboard = [
+                        [InlineKeyboardButton("🇨🇱 Pesos Chilenos (CLP)", callback_data="expcurr_CLP")],
+                        [InlineKeyboardButton("🇺🇸 Dolares (USD)", callback_data="expcurr_USD")],
+                    ]
                     await update.message.reply_text(
-                        f"*Excede el limite*\n\n"
-                        f"💳 {item.get('name', 'N/A')}: {fmt_money(limit)}\n"
-                        f"💵 Gasto: {fmt_money(amount)}\n"
-                        f"📊 Total seria: {fmt_money(balance)}",
+                        "En que moneda?",
+                        reply_markup=InlineKeyboardMarkup(keyboard),
                         parse_mode="Markdown",
                     )
-                    return
+                    context.user_data["awaiting_expense_currency"] = True
+                else:
+                    context.user_data["expense_currency"] = "CLP"
+                    await ask_expense_description(update.message, context)
             else:
+                context.user_data["expense_currency"] = "CLP"
                 balance = float(item.get("balance", 0))
                 if balance < amount:
                     await update.message.reply_text(
@@ -986,17 +1075,15 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         parse_mode="Markdown",
                     )
                     return
-
-            await update.message.reply_text(
-                "*Escribe que compraste* (ej: Bolas de queso/jalapeno):",
-                parse_mode="Markdown",
-            )
-            context.user_data["awaiting_expense_description"] = True
+                await ask_expense_description(update.message, context)
         except Exception as e:
             print(f"ERROR in expense flow: {e}", flush=True)
             await update.message.reply_text(
                 "⚠️ Error al procesar. Intenta con /start"
             )
+
+    elif context.user_data.get("awaiting_expense_currency"):
+        return
 
     elif context.user_data.get("awaiting_expense_description"):
         context.user_data["awaiting_expense_description"] = False
@@ -1005,28 +1092,52 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             item = context.user_data.get("expense_card", {})
             exp_type = context.user_data.get("expense_type")
             amount = context.user_data.get("expense_amount")
+            currency = context.user_data.get("expense_currency", "CLP")
             desc = text
 
             if exp_type == "credit_card":
-                new_used = float(item.get("used_credit", 0)) + amount
-                new_pct = credit_pct(new_used, item.get("credit_limit", 0))
-                available = float(item.get("credit_limit", 0)) - new_used
+                if currency == "USD":
+                    new_used = float(item.get("used_credit_usd", 0)) + amount
+                    limit = float(item.get("credit_limit_usd", 0))
+                    new_pct = credit_pct(new_used, limit)
+                    available = limit - new_used
 
-                keyboard = [
-                    [InlineKeyboardButton("✅ Confirmar gasto", callback_data="exec_expense")],
-                    [InlineKeyboardButton("❌ Cancelar", callback_data="cancel_expense")],
-                ]
+                    keyboard = [
+                        [InlineKeyboardButton("✅ Confirmar gasto", callback_data="exec_expense")],
+                        [InlineKeyboardButton("❌ Cancelar", callback_data="cancel_expense")],
+                    ]
 
-                await update.message.reply_text(
-                    f"*Confirmar gasto*\n\n"
-                    f"💳 {item.get('name', 'N/A')} (Credito)\n"
-                    f"📝 {desc}\n"
-                    f"💵 Monto: {fmt_money(amount)}\n"
-                    f"📊 Deuda nueva: {fmt_money(new_used)} / {fmt_money(item.get('credit_limit', 0))} ({new_pct:.0f}%)\n"
-                    f"{credit_status(new_pct)}",
-                    reply_markup=InlineKeyboardMarkup(keyboard),
-                    parse_mode="Markdown",
-                )
+                    await update.message.reply_text(
+                        f"*Confirmar gasto*\n\n"
+                        f"💳 {item.get('name', 'N/A')} (Credito)\n"
+                        f"📝 {desc}\n"
+                        f"💵 Monto: ${amount:.2f} USD\n"
+                        f"📊 Deuda nueva: ${new_used:.2f} / ${limit:.2f} USD ({new_pct:.0f}%)\n"
+                        f"{credit_status(new_pct)}",
+                        reply_markup=InlineKeyboardMarkup(keyboard),
+                        parse_mode="Markdown",
+                    )
+                else:
+                    new_used = float(item.get("used_credit", 0)) + amount
+                    limit = float(item.get("credit_limit", 0))
+                    new_pct = credit_pct(new_used, limit)
+                    available = limit - new_used
+
+                    keyboard = [
+                        [InlineKeyboardButton("✅ Confirmar gasto", callback_data="exec_expense")],
+                        [InlineKeyboardButton("❌ Cancelar", callback_data="cancel_expense")],
+                    ]
+
+                    await update.message.reply_text(
+                        f"*Confirmar gasto*\n\n"
+                        f"💳 {item.get('name', 'N/A')} (Credito)\n"
+                        f"📝 {desc}\n"
+                        f"💵 Monto: {fmt_money(amount)} CLP\n"
+                        f"📊 Deuda nueva: {fmt_money(new_used)} / {fmt_money(limit)} ({new_pct:.0f}%)\n"
+                        f"{credit_status(new_pct)}",
+                        reply_markup=InlineKeyboardMarkup(keyboard),
+                        parse_mode="Markdown",
+                    )
             else:
                 new_balance = float(item.get("balance", 0)) - amount
 
@@ -1077,6 +1188,7 @@ def main():
     app.add_handler(CallbackQueryHandler(pay_card_callback, pattern=r"^(paycard_|paysrc_|payamt_|confirm_pay|cancel_pay)"))
     app.add_handler(CallbackQueryHandler(income_callback, pattern=r"^(incdst_|confirm_income|cancel_income)"))
     app.add_handler(CallbackQueryHandler(expense_callback, pattern=r"^(expcard_|expacc_|exec_expense|cancel_expense)"))
+    app.add_handler(CallbackQueryHandler(currency_callback, pattern=r"^expcurr_"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
     app.add_error_handler(error_handler)
 

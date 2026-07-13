@@ -14,6 +14,8 @@ export default function AddCreditCardModal({ bankId, onClose, onCreated }) {
   const [franchise, setFranchise] = useState("visa");
   const [creditLimit, setCreditLimit] = useState("");
   const [usedCredit, setUsedCredit] = useState("");
+  const [creditLimitUSD, setCreditLimitUSD] = useState("");
+  const [usedCreditUSD, setUsedCreditUSD] = useState("");
   const [closingDay, setClosingDay] = useState("1");
   const [paymentDay, setPaymentDay] = useState("10");
   const [cardNumber, setCardNumber] = useState("");
@@ -33,6 +35,8 @@ export default function AddCreditCardModal({ bankId, onClose, onCreated }) {
         franchise,
         credit_limit: parseFloat(creditLimit) || 0,
         used_credit: parseFloat(usedCredit) || 0,
+        credit_limit_usd: parseFloat(creditLimitUSD) || 0,
+        used_credit_usd: parseFloat(usedCreditUSD) || 0,
         closing_day: parseInt(closingDay),
         payment_day: parseInt(paymentDay),
         card_number: cardNumber.trim() || null,
@@ -87,6 +91,26 @@ export default function AddCreditCardModal({ bankId, onClose, onCreated }) {
             value={usedCredit}
             onChange={(e) => setUsedCredit(e.target.value)}
             placeholder="0"
+            className="w-full px-3 py-2.5 bg-[#1a1d2e] border border-gray-700 rounded-lg text-gray-200 text-sm placeholder-gray-500 focus:outline-none focus:border-gray-500 transition-colors mb-3"
+          />
+
+          <label className="block mb-1 text-sm text-gray-400">Cupo USD (internacional)</label>
+          <input
+            type="number"
+            value={creditLimitUSD}
+            onChange={(e) => setCreditLimitUSD(e.target.value)}
+            placeholder="0"
+            step="0.01"
+            className="w-full px-3 py-2.5 bg-[#1a1d2e] border border-gray-700 rounded-lg text-gray-200 text-sm placeholder-gray-500 focus:outline-none focus:border-gray-500 transition-colors mb-3"
+          />
+
+          <label className="block mb-1 text-sm text-gray-400">Cupo USD utilizado</label>
+          <input
+            type="number"
+            value={usedCreditUSD}
+            onChange={(e) => setUsedCreditUSD(e.target.value)}
+            placeholder="0"
+            step="0.01"
             className="w-full px-3 py-2.5 bg-[#1a1d2e] border border-gray-700 rounded-lg text-gray-200 text-sm placeholder-gray-500 focus:outline-none focus:border-gray-500 transition-colors mb-3"
           />
 

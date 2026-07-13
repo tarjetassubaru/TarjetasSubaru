@@ -14,6 +14,8 @@ export default function EditCreditCardModal({ card, onClose, onUpdated }) {
   const [franchise, setFranchise] = useState(card.franchise);
   const [creditLimit, setCreditLimit] = useState(String(card.credit_limit));
   const [usedCredit, setUsedCredit] = useState(String(card.used_credit));
+  const [creditLimitUSD, setCreditLimitUSD] = useState(String(card.credit_limit_usd || 0));
+  const [usedCreditUSD, setUsedCreditUSD] = useState(String(card.used_credit_usd || 0));
   const [closingDay, setClosingDay] = useState(String(card.closing_day));
   const [paymentDay, setPaymentDay] = useState(String(card.payment_day));
   const [cardNumber, setCardNumber] = useState(card.card_number || "");
@@ -32,6 +34,8 @@ export default function EditCreditCardModal({ card, onClose, onUpdated }) {
         franchise,
         credit_limit: parseFloat(creditLimit) || 0,
         used_credit: parseFloat(usedCredit) || 0,
+        credit_limit_usd: parseFloat(creditLimitUSD) || 0,
+        used_credit_usd: parseFloat(usedCreditUSD) || 0,
         closing_day: parseInt(closingDay),
         payment_day: parseInt(paymentDay),
         card_number: cardNumber.trim() || null,
@@ -83,6 +87,24 @@ export default function EditCreditCardModal({ card, onClose, onUpdated }) {
             type="number"
             value={usedCredit}
             onChange={(e) => setUsedCredit(e.target.value)}
+            className="w-full px-3 py-2.5 bg-[#1a1d2e] border border-gray-700 rounded-lg text-gray-200 text-sm placeholder-gray-500 focus:outline-none focus:border-gray-500 transition-colors mb-3"
+          />
+
+          <label className="block mb-1 text-sm text-gray-400">Cupo USD (internacional)</label>
+          <input
+            type="number"
+            value={creditLimitUSD}
+            onChange={(e) => setCreditLimitUSD(e.target.value)}
+            step="0.01"
+            className="w-full px-3 py-2.5 bg-[#1a1d2e] border border-gray-700 rounded-lg text-gray-200 text-sm placeholder-gray-500 focus:outline-none focus:border-gray-500 transition-colors mb-3"
+          />
+
+          <label className="block mb-1 text-sm text-gray-400">Cupo USD utilizado</label>
+          <input
+            type="number"
+            value={usedCreditUSD}
+            onChange={(e) => setUsedCreditUSD(e.target.value)}
+            step="0.01"
             className="w-full px-3 py-2.5 bg-[#1a1d2e] border border-gray-700 rounded-lg text-gray-200 text-sm placeholder-gray-500 focus:outline-none focus:border-gray-500 transition-colors mb-3"
           />
 

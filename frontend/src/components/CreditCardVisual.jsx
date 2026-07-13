@@ -28,6 +28,10 @@ export default function CreditCardVisual({ card, bankName, bankLogo, onRefresh }
   const available = card.credit_limit - card.used_credit;
   const percentage = card.credit_limit > 0 ? Math.min((card.used_credit / card.credit_limit) * 100, 100) : 0;
 
+  const hasUSD = (card.credit_limit_usd || 0) > 0;
+  const availableUSD = (card.credit_limit_usd || 0) - (card.used_credit_usd || 0);
+  const percentageUSD = hasUSD ? Math.min(((card.used_credit_usd || 0) / card.credit_limit_usd) * 100, 100) : 0;
+
   const formattedLimit = new Intl.NumberFormat("es-CL", {
     style: "currency",
     currency: "CLP",
@@ -96,6 +100,25 @@ export default function CreditCardVisual({ card, bankName, bankLogo, onRefresh }
             <span>Cierre dia {card.closing_day}</span>
             <span>Pago dia {card.payment_day}</span>
           </div>
+          {hasUSD && (
+            <>
+              <div className="mt-2 pt-2 border-t border-white/10">
+                <div className="w-full h-1.5 bg-gray-800 rounded-full overflow-hidden">
+                  <div
+                    className="h-full rounded-full transition-all duration-500"
+                    style={{
+                      width: `${percentageUSD}%`,
+                      background: percentageUSD > 80 ? "#ef4444" : percentageUSD > 50 ? "#f59e0b" : "#3b82f6",
+                    }}
+                  />
+                </div>
+                <div className="flex justify-between text-[10px] text-gray-500 mt-1">
+                  <span>${(card.used_credit_usd || 0).toFixed(2)} usado de ${(card.credit_limit_usd || 0).toFixed(2)} USD</span>
+                  <span>{percentageUSD.toFixed(0)}%</span>
+                </div>
+              </div>
+            </>
+          )}
         </div>
         <div className="absolute top-3 right-3 flex gap-1 opacity-0 group-hover:opacity-100 transition-all">
           <button
