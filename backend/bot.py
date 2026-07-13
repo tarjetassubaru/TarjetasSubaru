@@ -138,7 +138,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     missing = []
                     for key, cond in conds.items():
                         if not cond.get("met", False):
-                            missing.append(cond.get("label", key))
+                            current = cond.get("current", "?")
+                            required = cond.get("required", "?")
+                            label = cond.get("label", key)
+                            missing.append(f"{label}: {current}/{required}")
                     if missing:
                         text += f"\n   ⚠️ {', '.join(missing)}\n"
             except Exception:
@@ -221,7 +224,10 @@ async def show_main_menu(query, context):
                     missing = []
                     for key, cond in conds.items():
                         if not cond.get("met", False):
-                            missing.append(cond.get("label", key))
+                            current = cond.get("current", "?")
+                            required = cond.get("required", "?")
+                            label = cond.get("label", key)
+                            missing.append(f"{label}: {current}/{required}")
                     if missing:
                         text += f"\n   ⚠️ {', '.join(missing)}\n"
             except Exception:
