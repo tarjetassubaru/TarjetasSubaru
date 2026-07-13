@@ -71,12 +71,30 @@ async def apply_weekly_interest():
             logger.error(f"Error applying weekly interest: {e}")
 
 
+PING_INTERVAL = 10 * 60
+
+
+async def keep_alive_ping():
+    import httpx
+    while True:
+        await asyncio.sleep(PING_INTERVAL)
+        try:
+            url = os.getenv("RAILWAY_PUBLIC_URL", "https://tarjetassubaru-production.up.railway.app")
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(url)
+                logger.info(f"Ping {url} -> {resp.status_code}")
+        except Exception as e:
+            logger.error(f"Ping failed: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
     task = asyncio.create_task(apply_weekly_interest())
+    ping_task = asyncio.create_task(keep_alive_ping())
     yield
     task.cancel()
+    ping_task.cancel()
 
 
 app = FastAPI(title="Credito Subaru API", lifespan=lifespan)

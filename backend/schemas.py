@@ -88,6 +88,7 @@ class CreditCardCreate(BaseModel):
     used_credit_usd: float = 0
     closing_day: int = 1
     payment_day: int = 10
+    payment_day_new: int | None = None
     card_number: str | None = None
     color: str = "#1a1d2e"
 
@@ -101,6 +102,7 @@ class CreditCardUpdate(BaseModel):
     used_credit_usd: float | None = None
     closing_day: int | None = None
     payment_day: int | None = None
+    payment_day_new: int | None = None
     card_number: str | None = None
     color: str | None = None
 
@@ -118,6 +120,7 @@ class CreditCardResponse(BaseModel):
     used_credit_usd: float
     closing_day: int
     payment_day: int
+    payment_day_new: int | None
     card_number: str | None
     color: str | None
     created_at: datetime

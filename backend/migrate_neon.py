@@ -52,6 +52,14 @@ async def migrate():
             "UPDATE credit_cards SET credit_limit_usd = 70, used_credit_usd = 10.66 WHERE name ILIKE '%bci%' OR name ILIKE '%gold%'"
         ))
         print("  OK: BCI USD values")
+        await conn.execute(text(
+            "ALTER TABLE credit_cards ADD COLUMN IF NOT EXISTS payment_day_new INTEGER"
+        ))
+        print("  OK: payment_day_new")
+        await conn.execute(text(
+            "UPDATE credit_cards SET card_number = '4495', closing_day = 22, payment_day = 5, payment_day_new = 12 WHERE name ILIKE '%bci%'"
+        ))
+        print("  OK: BCI card update (4495, closing=22, payment=5, new=12)")
     print("Migration completed successfully")
 
 

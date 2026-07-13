@@ -128,6 +128,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 text += f"   Deuda: {fmt_usd(b_usd_used)} / {fmt_usd(b_usd_limit)}\n"
                 text += f"   Disp: {fmt_usd(avail)}\n"
 
+            for c in cards:
+                closing = c.get("closing_day", "?")
+                payment = c.get("payment_day", "?")
+                payment_new = c.get("payment_day_new")
+                text += f"   📅 {c.get('name', 'Tarjeta')}: Facturación día {closing}"
+                if payment_new:
+                    text += f", Pago día {payment} → *día {payment_new} (próx. mes)*\n"
+                else:
+                    text += f", Pago día {payment}\n"
+
             try:
                 rewards = await api_get(f"/api/banks/{bid}/rewards")
                 free = rewards.get("free_maintenance", False)
@@ -232,6 +242,16 @@ async def show_main_menu(query, context):
                 text += f"   🇺🇸 {bar(p)} {p:.0f}%\n"
                 text += f"   Deuda: {fmt_usd(b_usd_used)} / {fmt_usd(b_usd_limit)}\n"
                 text += f"   Disp: {fmt_usd(avail)}\n"
+
+            for c in cards:
+                closing = c.get("closing_day", "?")
+                payment = c.get("payment_day", "?")
+                payment_new = c.get("payment_day_new")
+                text += f"   📅 {c.get('name', 'Tarjeta')}: Facturación día {closing}"
+                if payment_new:
+                    text += f", Pago día {payment} → *día {payment_new} (próx. mes)*\n"
+                else:
+                    text += f", Pago día {payment}\n"
 
             try:
                 rewards = await api_get(f"/api/banks/{bid}/rewards")
@@ -408,6 +428,15 @@ async def show_bank_detail(query, context, data):
                     text += f"   🇺🇸 USD {bar(p_u)} {p_u:.0f}%\n"
                     text += f"   Deuda: {fmt_usd(c.get('used_credit_usd', 0))} / {fmt_usd(c.get('credit_limit_usd', 0))}\n"
                     text += f"   Disp: {fmt_usd(avail_usd)}\n"
+
+                closing = c.get("closing_day", "?")
+                payment = c.get("payment_day", "?")
+                payment_new = c.get("payment_day_new")
+                text += f"   📅 Facturación: día {closing}\n"
+                if payment_new:
+                    text += f"   📅 Pago: día {payment} → *día {payment_new} (próx. mes)*\n"
+                else:
+                    text += f"   📅 Pago: día {payment}\n"
 
         try:
             rewards = await api_get(f"/api/banks/{bank_id}/rewards")

@@ -70,6 +70,7 @@ class CreditCard(Base):
     used_credit_usd: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False, default=0)
     closing_day: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     payment_day: Mapped[int] = mapped_column(Integer, nullable=False, default=10)
+    payment_day_new: Mapped[int | None] = mapped_column(Integer, nullable=True)
     card_number: Mapped[str] = mapped_column(String(4), nullable=True)
     color: Mapped[str] = mapped_column(String(7), nullable=True, default="#1a1d2e")
     created_at: Mapped[datetime] = mapped_column(
