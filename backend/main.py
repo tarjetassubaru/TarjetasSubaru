@@ -444,11 +444,10 @@ async def get_bank_rewards(bank_id: uuid.UUID, db: AsyncSession = Depends(get_db
     txns = txn_result.scalars().all()
 
     depositos = [t for t in txns if t.type == "ingreso" and t.category != "Pago tarjeta" and t.category != "Intereses"]
-    compras_clp = [t for t in txns if t.type == "gasto"]
+    compras_txn = [t for t in txns if t.type == "gasto"]
 
     total_depositado = sum(float(t.amount) for t in depositos)
-    tiene_deposito_50k = total_depositado >= 50000
-    num_compras = len(compras_clp)
+    num_compras = len(compras_txn)
 
     card_result = await db.execute(
         select(CreditCard).where(CreditCard.bank_id == bank_id)
@@ -464,23 +463,92 @@ async def get_bank_rewards(bank_id: uuid.UUID, db: AsyncSession = Depends(get_db
             if not has_usd_txn:
                 num_compras += 1
 
-    tiene_4_compras = num_compras >= 4
+    bank_name = bank.name.lower()
 
-    return {
-        "bank_id": str(bank_id),
-        "bank_name": bank.name,
-        "month": now.strftime("%Y-%m"),
-        "conditions": {
-            "deposito_minimo": {
-                "required": 50000,
-                "current": total_depositado,
-                "met": tiene_deposito_50k,
+    if "bci" in bank_name:
+        tiene_deposito_50k = total_depositado >= 50000
+        tiene_4_compras = num_compras >= 4
+        return {
+            "bank_id": str(bank_id),
+            "bank_name": bank.name,
+            "bank_type": "bci",
+            "month": now.strftime("%Y-%m"),
+            "plan": "BCI Universitario",
+            "conditions": {
+                "deposito_minimo": {
+                    "required": 50000,
+                    "current": total_depositado,
+                    "met": tiene_deposito_50k,
+                    "label": "Deposito >= $50.000",
+                },
+                "compras_minimas": {
+                    "required": 4,
+                    "current": num_compras,
+                    "met": tiene_4_compras,
+                    "label": "Compras >= 4 al mes",
+                },
             },
-            "compras_minimas": {
-                "required": 4,
-                "current": num_compras,
-                "met": tiene_4_compras,
+            "free_maintenance": tiene_deposito_50k and tiene_4_compras,
+            "message": "Ambas condiciones deben cumplirse (AND)",
+        }
+
+    elif "santander" in bank_name:
+        edad = 23
+        gratis_por_edad = edad <= 24
+
+        if gratis_por_edad:
+            return {
+                "bank_id": str(bank_id),
+                "bank_name": bank.name,
+                "bank_type": "santander",
+                "month": now.strftime("%Y-%m"),
+                "plan": "Santander LATAM Pass Universitario",
+                "conditions": {
+                    "edad": {
+                        "current": edad,
+                        "limit": 24,
+                        "met": True,
+                        "label": f"Edad {edad} <= 24 años",
+                    },
+                },
+                "free_maintenance": True,
+                "message": "Gratis por edad (hasta 24 años inclusive)",
+            }
+        else:
+            tiene_1_compra = num_compras >= 1
+            return {
+                "bank_id": str(bank_id),
+                "bank_name": bank.name,
+                "bank_type": "santander",
+                "month": now.strftime("%Y-%m"),
+                "plan": "Santander LATAM Pass Universitario",
+                "conditions": {
+                    "compras_minimas": {
+                        "required": 1,
+                        "current": num_compras,
+                        "met": tiene_1_compra,
+                        "label": "1 compra O PAT activo",
+                    },
+                },
+                "free_maintenance": tiene_1_compra,
+                "message": "Solo 1 compra o PAT (OR). Gratis por edad hasta 24 años.",
+            }
+
+    else:
+        tiene_1_compra = num_compras >= 1
+        return {
+            "bank_id": str(bank_id),
+            "bank_name": bank.name,
+            "bank_type": "generic",
+            "month": now.strftime("%Y-%m"),
+            "conditions": {
+                "compras_minimas": {
+                    "required": 1,
+                    "current": num_compras,
+                    "met": tiene_1_compra,
+                    "label": "Compras este mes",
+                },
             },
-        },
-        "free_maintenance": tiene_deposito_50k and tiene_4_compras,
-    }
+            "free_maintenance": False,
+            "message": "Sin condiciones configuradas",
+        }

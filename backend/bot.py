@@ -130,20 +130,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             try:
                 rewards = await api_get(f"/api/banks/{bid}/rewards")
-                conds = rewards.get("conditions", {})
                 free = rewards.get("free_maintenance", False)
-                dep = conds.get("deposito_minimo", {})
-                comp = conds.get("compras_minimas", {})
+                conds = rewards.get("conditions", {})
                 if free:
                     text += f"   🎉 Mantencion GRATIS\n"
                 else:
-                    parts = []
-                    if not dep.get("met", False):
-                        parts.append(f"deps.{fmt(dep.get('required', 50000) - dep.get('current', 0))}")
-                    if not comp.get("met", False):
-                        parts.append(f"{comp.get('required', 4) - comp.get('current', 0)}compras")
-                    if parts:
-                        text += f"   ⚠️ Falta: {', '.join(parts)}\n"
+                    missing = []
+                    for key, cond in conds.items():
+                        if not cond.get("met", False):
+                            missing.append(cond.get("label", key))
+                    if missing:
+                        text += f"   ⚠️ {', '.join(missing)}\n"
             except Exception:
                 pass
 
@@ -216,20 +213,17 @@ async def show_main_menu(query, context):
 
             try:
                 rewards = await api_get(f"/api/banks/{bid}/rewards")
-                conds = rewards.get("conditions", {})
                 free = rewards.get("free_maintenance", False)
-                dep = conds.get("deposito_minimo", {})
-                comp = conds.get("compras_minimas", {})
+                conds = rewards.get("conditions", {})
                 if free:
                     text += f"   🎉 Mantencion GRATIS\n"
                 else:
-                    parts = []
-                    if not dep.get("met", False):
-                        parts.append(f"deps.{fmt(dep.get('required', 50000) - dep.get('current', 0))}")
-                    if not comp.get("met", False):
-                        parts.append(f"{comp.get('required', 4) - comp.get('current', 0)}compras")
-                    if parts:
-                        text += f"   ⚠️ Falta: {', '.join(parts)}\n"
+                    missing = []
+                    for key, cond in conds.items():
+                        if not cond.get("met", False):
+                            missing.append(cond.get("label", key))
+                    if missing:
+                        text += f"   ⚠️ {', '.join(missing)}\n"
             except Exception:
                 pass
 
@@ -375,29 +369,35 @@ async def show_bank_detail(query, context, data):
             rewards = await api_get(f"/api/banks/{bank_id}/rewards")
             conds = rewards.get("conditions", {})
             free = rewards.get("free_maintenance", False)
+            plan = rewards.get("plan", "")
+            message = rewards.get("message", "")
 
             text += "\n━━━━━━━━━━━━━━━━━━━━\n"
-            text += "🎁 *MANTENCION GRATIS*\n"
+            text += f"🎁 *{plan}*\n"
+            text += f"   {message}\n\n"
 
-            dep = conds.get("deposito_minimo", {})
-            dep_met = dep.get("met", False)
-            dep_icon = "✅" if dep_met else "❌"
-            text += f"   {dep_icon} Deposito >= {fmt(dep.get('required', 50000))}: {fmt(dep.get('current', 0))}\n"
-
-            comp = conds.get("compras_minimas", {})
-            comp_met = comp.get("met", False)
-            comp_icon = "✅" if comp_met else "❌"
-            text += f"   {comp_icon} Compras >= {comp.get('required', 4)}: {comp.get('current', 0)} este mes\n"
+            for key, cond in conds.items():
+                met = cond.get("met", False)
+                icon = "✅" if met else "❌"
+                label = cond.get("label", key)
+                current = cond.get("current", "")
+                required = cond.get("required")
+                if required is not None and current != "":
+                    text += f"   {icon} {label}: {current}/{required}\n"
+                elif current != "":
+                    text += f"   {icon} {label}: {current}\n"
+                else:
+                    text += f"   {icon} {label}\n"
 
             if free:
-                text += "\n   🎉 *CUMPLES! Mantencion GRATIS este mes*\n"
+                text += "\n   🎉 *CUMPLES! Mantencion GRATIS*\n"
             else:
                 missing = []
-                if not dep_met:
-                    missing.append(f"depos. {fmt(dep.get('required', 50000) - dep.get('current', 0))}")
-                if not comp_met:
-                    missing.append(f"{comp.get('required', 4) - comp.get('current', 0)} compras mas")
-                text += f"\n   ⚠️ Te falta: {', '.join(missing)}\n"
+                for key, cond in conds.items():
+                    if not cond.get("met", False):
+                        missing.append(cond.get("label", key))
+                if missing:
+                    text += f"\n   ⚠️ Pendiente: {', '.join(missing)}\n"
         except Exception:
             pass
 
