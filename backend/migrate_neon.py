@@ -20,14 +20,17 @@ elif DATABASE_URL.startswith("postgresql://") and "+asyncpg" not in DATABASE_URL
 
 DATABASE_URL = DATABASE_URL.replace("?sslmode=require", "")
 
-ssl_context = ssl_mod.create_default_context()
-ssl_context.check_hostname = False
-ssl_context.verify_mode = ssl_mod.CERT_NONE
-engine = create_async_engine(DATABASE_URL, echo=False, connect_args={"ssl": ssl_context})
+if "neon.tech" in DATABASE_URL:
+    ssl_context = ssl_mod.create_default_context()
+    ssl_context.check_hostname = False
+    ssl_context.verify_mode = ssl_mod.CERT_NONE
+    engine = create_async_engine(DATABASE_URL, echo=False, connect_args={"ssl": ssl_context})
+else:
+    engine = create_async_engine(DATABASE_URL, echo=False)
 
 
 async def migrate():
-    print(f"Running migration... DB host hint: {DATABASE_URL.split('@')[-1][:30] if '@' in DATABASE_URL else 'unknown'}")
+    print(f"Running migration...")
     async with engine.begin() as conn:
         await conn.execute(text(
             "ALTER TABLE credit_cards ADD COLUMN IF NOT EXISTS credit_limit_usd NUMERIC(12,2) NOT NULL DEFAULT 0"
