@@ -31,6 +31,9 @@ async def migrate():
         await conn.execute(text(
             "ALTER TABLE transactions ADD COLUMN IF NOT EXISTS currency VARCHAR(3) NOT NULL DEFAULT 'CLP'"
         ))
+        await conn.execute(text(
+            "UPDATE credit_cards SET credit_limit_usd = 70, used_credit_usd = 10.66 WHERE name ILIKE '%bci%' OR name ILIKE '%gold%'"
+        ))
     print("Migration completed successfully")
 
 
