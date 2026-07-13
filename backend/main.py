@@ -444,11 +444,26 @@ async def get_bank_rewards(bank_id: uuid.UUID, db: AsyncSession = Depends(get_db
     txns = txn_result.scalars().all()
 
     depositos = [t for t in txns if t.type == "ingreso" and t.category != "Pago tarjeta" and t.category != "Intereses"]
-    compras = [t for t in txns if t.type == "gasto"]
+    compras_clp = [t for t in txns if t.type == "gasto"]
 
     total_depositado = sum(float(t.amount) for t in depositos)
     tiene_deposito_50k = total_depositado >= 50000
-    num_compras = len(compras)
+    num_compras = len(compras_clp)
+
+    card_result = await db.execute(
+        select(CreditCard).where(CreditCard.bank_id == bank_id)
+    )
+    cards = card_result.scalars().all()
+    for c in cards:
+        if float(c.used_credit_usd or 0) > 0:
+            has_usd_txn = any(
+                t.credit_card_id == c.id and t.currency == "USD" and t.type == "gasto"
+                and t.created_at >= month_start
+                for t in txns
+            )
+            if not has_usd_txn:
+                num_compras += 1
+
     tiene_4_compras = num_compras >= 4
 
     return {
