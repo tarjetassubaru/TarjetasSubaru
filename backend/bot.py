@@ -89,21 +89,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     total_balance = sum(float(a["balance"]) for a in all_accounts)
 
-    total_clp_used = 0
-    total_clp_limit = 0
-    total_usd_used = 0
-    total_usd_limit = 0
-
-    for bd in bank_data.values():
-        for c in bd.get("credit_cards", []):
-            total_clp_used += float(c["used_credit"])
-            total_clp_limit += float(c["credit_limit"])
-            total_usd_used += float(c.get("used_credit_usd", 0))
-            total_usd_limit += float(c.get("credit_limit_usd", 0))
-
-    p_clp = pct(total_clp_used, total_clp_limit)
-    p_usd = pct(total_usd_used, total_usd_limit)
-
     text = "━━━━━━━━━━━━━━━━━━━━\n"
     text += "💰 *CUENTAS*\n"
     text += f"   Total: *{fmt(total_balance)}*\n"
@@ -117,20 +102,50 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += f"   • {a['name']} ({bname}): {fmt(a['balance'])}\n"
 
     text += "\n━━━━━━━━━━━━━━━━━━━━\n"
-    text += "💳 *CREDITO CLP*\n"
-    if total_clp_limit > 0:
-        text += f"   {bar(p_clp)} {p_clp:.0f}%\n"
-        text += f"   Usado: {fmt(total_clp_used)} / {fmt(total_clp_limit)}\n"
-        text += f"   {status_emoji(p_clp)} {status_text(p_clp)}\n"
-    else:
-        text += "   Sin credito CLP\n"
+    text += "💳 *CREDITO POR BANCO*\n"
 
-    if total_usd_limit > 0:
-        text += "\n━━━━━━━━━━━━━━━━━━━━\n"
-        text += "💵 *CREDITO USD*\n"
-        text += f"   {bar(p_usd)} {p_usd:.0f}%\n"
-        text += f"   Usado: {fmt_usd(total_usd_used)} / {fmt_usd(total_usd_limit)}\n"
-        text += f"   {status_emoji(p_usd)} {status_text(p_usd)}\n"
+    for b in banks:
+        bid = b["id"]
+        bd = bank_data.get(bid, {})
+        cards = bd.get("credit_cards", [])
+        b_clp_used = sum(float(c["used_credit"]) for c in cards)
+        b_clp_limit = sum(float(c["credit_limit"]) for c in cards)
+        b_usd_used = sum(float(c.get("used_credit_usd", 0)) for c in cards)
+        b_usd_limit = sum(float(c.get("credit_limit_usd", 0)) for c in cards)
+
+        if b_clp_limit > 0 or b_usd_limit > 0:
+            text += f"\n   🏦 *{b['name'].upper()}*\n"
+            if b_clp_limit > 0:
+                p = pct(b_clp_used, b_clp_limit)
+                avail = b_clp_limit - b_clp_used
+                text += f"   🇨🇱 {bar(p)} {p:.0f}%\n"
+                text += f"   Deuda: {fmt(b_clp_used)} / {fmt(b_clp_limit)}\n"
+                text += f"   Disp: {fmt(avail)}\n"
+            if b_usd_limit > 0:
+                p = pct(b_usd_used, b_usd_limit)
+                avail = b_usd_limit - b_usd_used
+                text += f"   🇺🇸 {bar(p)} {p:.0f}%\n"
+                text += f"   Deuda: {fmt_usd(b_usd_used)} / {fmt_usd(b_usd_limit)}\n"
+                text += f"   Disp: {fmt_usd(avail)}\n"
+
+            try:
+                rewards = await api_get(f"/api/banks/{bid}/rewards")
+                conds = rewards.get("conditions", {})
+                free = rewards.get("free_maintenance", False)
+                dep = conds.get("deposito_minimo", {})
+                comp = conds.get("compras_minimas", {})
+                if free:
+                    text += f"   🎉 Mantencion GRATIS\n"
+                else:
+                    parts = []
+                    if not dep.get("met", False):
+                        parts.append(f"deps.{fmt(dep.get('required', 50000) - dep.get('current', 0))}")
+                    if not comp.get("met", False):
+                        parts.append(f"{comp.get('required', 4) - comp.get('current', 0)}compras")
+                    if parts:
+                        text += f"   ⚠️ Falta: {', '.join(parts)}\n"
+            except Exception:
+                pass
 
     text += "\n━━━━━━━━━━━━━━━━━━━━"
 
@@ -160,21 +175,6 @@ async def show_main_menu(query, context):
 
     total_balance = sum(float(a["balance"]) for a in all_accounts)
 
-    total_clp_used = 0
-    total_clp_limit = 0
-    total_usd_used = 0
-    total_usd_limit = 0
-
-    for bd in bank_data.values():
-        for c in bd.get("credit_cards", []):
-            total_clp_used += float(c["used_credit"])
-            total_clp_limit += float(c["credit_limit"])
-            total_usd_used += float(c.get("used_credit_usd", 0))
-            total_usd_limit += float(c.get("credit_limit_usd", 0))
-
-    p_clp = pct(total_clp_used, total_clp_limit)
-    p_usd = pct(total_usd_used, total_usd_limit)
-
     text = "━━━━━━━━━━━━━━━━━━━━\n"
     text += "💰 *CUENTAS*\n"
     text += f"   Total: *{fmt(total_balance)}*\n"
@@ -188,20 +188,50 @@ async def show_main_menu(query, context):
         text += f"   • {a['name']} ({bname}): {fmt(a['balance'])}\n"
 
     text += "\n━━━━━━━━━━━━━━━━━━━━\n"
-    text += "💳 *CREDITO CLP*\n"
-    if total_clp_limit > 0:
-        text += f"   {bar(p_clp)} {p_clp:.0f}%\n"
-        text += f"   Usado: {fmt(total_clp_used)} / {fmt(total_clp_limit)}\n"
-        text += f"   {status_emoji(p_clp)} {status_text(p_clp)}\n"
-    else:
-        text += "   Sin credito CLP\n"
+    text += "💳 *CREDITO POR BANCO*\n"
 
-    if total_usd_limit > 0:
-        text += "\n━━━━━━━━━━━━━━━━━━━━\n"
-        text += "💵 *CREDITO USD*\n"
-        text += f"   {bar(p_usd)} {p_usd:.0f}%\n"
-        text += f"   Usado: {fmt_usd(total_usd_used)} / {fmt_usd(total_usd_limit)}\n"
-        text += f"   {status_emoji(p_usd)} {status_text(p_usd)}\n"
+    for b in banks:
+        bid = b["id"]
+        bd = bank_data.get(bid, {})
+        cards = bd.get("credit_cards", [])
+        b_clp_used = sum(float(c["used_credit"]) for c in cards)
+        b_clp_limit = sum(float(c["credit_limit"]) for c in cards)
+        b_usd_used = sum(float(c.get("used_credit_usd", 0)) for c in cards)
+        b_usd_limit = sum(float(c.get("credit_limit_usd", 0)) for c in cards)
+
+        if b_clp_limit > 0 or b_usd_limit > 0:
+            text += f"\n   🏦 *{b['name'].upper()}*\n"
+            if b_clp_limit > 0:
+                p = pct(b_clp_used, b_clp_limit)
+                avail = b_clp_limit - b_clp_used
+                text += f"   🇨🇱 {bar(p)} {p:.0f}%\n"
+                text += f"   Deuda: {fmt(b_clp_used)} / {fmt(b_clp_limit)}\n"
+                text += f"   Disp: {fmt(avail)}\n"
+            if b_usd_limit > 0:
+                p = pct(b_usd_used, b_usd_limit)
+                avail = b_usd_limit - b_usd_used
+                text += f"   🇺🇸 {bar(p)} {p:.0f}%\n"
+                text += f"   Deuda: {fmt_usd(b_usd_used)} / {fmt_usd(b_usd_limit)}\n"
+                text += f"   Disp: {fmt_usd(avail)}\n"
+
+            try:
+                rewards = await api_get(f"/api/banks/{bid}/rewards")
+                conds = rewards.get("conditions", {})
+                free = rewards.get("free_maintenance", False)
+                dep = conds.get("deposito_minimo", {})
+                comp = conds.get("compras_minimas", {})
+                if free:
+                    text += f"   🎉 Mantencion GRATIS\n"
+                else:
+                    parts = []
+                    if not dep.get("met", False):
+                        parts.append(f"deps.{fmt(dep.get('required', 50000) - dep.get('current', 0))}")
+                    if not comp.get("met", False):
+                        parts.append(f"{comp.get('required', 4) - comp.get('current', 0)}compras")
+                    if parts:
+                        text += f"   ⚠️ Falta: {', '.join(parts)}\n"
+            except Exception:
+                pass
 
     text += "\n━━━━━━━━━━━━━━━━━━━━"
 
